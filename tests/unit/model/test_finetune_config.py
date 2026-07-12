@@ -1,9 +1,9 @@
 """FinetuneConfig 配置模型测试"""
 
-import tempfile
 from pathlib import Path
 
 import pytest
+import pydantic
 
 from model.finetune.config import (
     FinetuneConfig,
@@ -29,7 +29,7 @@ class TestLoRAConfig:
         assert cfg.target_modules == ["q_proj", "v_proj"]
 
     def test_r_out_of_range_raises(self):
-        with pytest.raises(Exception):  # pydantic ValidationError
+        with pytest.raises(pydantic.ValidationError):
             LoRAConfig(r=0)
 
 
@@ -41,7 +41,7 @@ class TestTrainingConfig:
         assert cfg.batch_size == 8
 
     def test_epochs_must_be_positive(self):
-        with pytest.raises(Exception):
+        with pytest.raises(pydantic.ValidationError):
             TrainingConfig(epochs=0)
 
 
@@ -52,7 +52,7 @@ class TestDistillationConfig:
         assert cfg.alpha == 0.5
 
     def test_alpha_clamped(self):
-        with pytest.raises(Exception):
+        with pytest.raises(pydantic.ValidationError):
             DistillationConfig(alpha=1.5)
 
 
@@ -81,6 +81,6 @@ class TestFinetuneConfig:
 
     def test_from_yaml_returns_defaults_when_no_settings(self):
         """无 config.settings 时返回默认配置"""
-        cfg = FinetuneConfig.from_yaml(settings_module=None)
+        cfg = FinetuneConfig.from_yaml()
         assert cfg.device == "auto"
         assert cfg.training.epochs == 3

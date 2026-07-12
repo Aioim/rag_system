@@ -2,10 +2,13 @@
 微调配置模型 — Pydantic v2 + YAML 配置加载
 """
 
+import logging
 from pathlib import Path
 from typing import Optional, Literal
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class LoRAConfig(BaseModel):
@@ -66,7 +69,7 @@ class FinetuneConfig(BaseModel):
         return project_root / self.data_dir
 
     @classmethod
-    def from_yaml(cls, settings_module=None) -> "FinetuneConfig":
+    def from_yaml(cls) -> "FinetuneConfig":
         """从 config.settings YAML 加载配置，不存在则使用默认值。
 
         通过 config.settings.get() 逐项读取，
@@ -79,7 +82,8 @@ class FinetuneConfig(BaseModel):
 
         try:
             finetune_cfg = settings.get("finetune") or {}
-        except Exception:
+        except (KeyError, AttributeError):
+            logger.warning("failed to read 'finetune' from settings, using defaults")
             finetune_cfg = {}
 
         if not finetune_cfg:
