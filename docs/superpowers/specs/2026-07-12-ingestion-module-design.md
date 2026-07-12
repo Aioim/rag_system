@@ -157,7 +157,7 @@ chunking:
   overlap: 64
   strategy: semantic                    # semantic | fixed | hierarchical
   semantic_threshold_percentile: 0.9   # SemanticChunker 专用
-  semantic_buffer_size: 1              # 切分点缓冲区句子数
+  semantic_buffer_size: 1              # 切分点缓冲区句子数（0=严格在语义边界切分，越大切分越保守）
 ```
 
 ### 输入/输出
@@ -209,8 +209,7 @@ chunk 列表 → 批量 embedding → 写回 chunk
 ctx.chunks (无 embedding)
     │
     ├── 1. 过滤：跳过已有 embedding 的 chunk（幂等，支持重跑）
-    ├── 2. 批量调用 model manager
-    │        models.get_path("embedding")  → 本地模型路径
+    ├── 2. 批量调用 self.embedding_model.encode(texts)
     │        batch_size = settings.embedding.batch_size (32)
     ├── 3. 结果写回 ctx.chunks[i].embedding
     └── 4. 记录耗时、batch 数量到 ctx.metadata
@@ -241,7 +240,7 @@ ctx.chunks (无 embedding)
 
 ```
 EmbedderStage
-    ├── model manager (models.get_path / models.load)
+    ├── embedding_model（SentenceTransformer 实例，构造函数注入）
     └── settings.embedding (batch_size, dimension, device)
 ```
 
