@@ -10,14 +10,25 @@ from logger import logger
 
 
 def _sanitize_metadata(meta: dict) -> dict:
-    """将 metadata 中的非 JSON 可序列化值转为字符串"""
-    safe = {}
-    for k, v in meta.items():
-        if isinstance(v, (str, int, float, bool, type(None), list, dict)):
-            safe[k] = v
-        else:
-            safe[k] = str(v)
-    return safe
+    """递归清洗 metadata，将非 JSON 可序列化值转为字符串"""
+    import numpy as np
+
+    def _sanitize(value):
+        if value is None or isinstance(value, (bool, str, int, float)):
+            return value
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.ndarray,)):
+            return value.tolist()
+        if isinstance(value, dict):
+            return {k: _sanitize(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_sanitize(v) for v in value]
+        return str(value)
+
+    return _sanitize(meta)
 
 
 class FAISSIndexWriter:
@@ -60,10 +71,12 @@ class FAISSIndexWriter:
 
         # 加载或创建 FAISS 索引
         is_cosine = cfg["metric_type"] == "COSINE"
+        _METRIC_IP = getattr(faiss, "METRIC_INNER_PRODUCT", 10)
         if index_path.exists():
             index = faiss.read_index(str(index_path))
-            actual_type = type(index).__name__
-            if cfg["index_type"] not in actual_type and cfg["index_type"] != "IVF_FLAT":
+            actual_type = type(index).__name__.upper()
+            config_type = cfg["index_type"].upper().replace("_", "")
+            if config_type not in actual_type:
                 logger.warning(
                     "磁盘索引类型 %s 与配置 index_type=%s 不一致，使用磁盘索引",
                     actual_type, cfg["index_type"],
@@ -71,10 +84,16 @@ class FAISSIndexWriter:
         else:
             dim = expected_dim
             if cfg["index_type"] == "IVF_FLAT":
-                quantizer = faiss.IndexFlatIP(dim)
-                index = faiss.IndexIVFFlat(
-                    quantizer, dim, cfg["nlist"], faiss.METRIC_INNER_PRODUCT
-                )
+                if is_cosine:
+                    quantizer = faiss.IndexFlatIP(dim)
+                    index = faiss.IndexIVFFlat(
+                        quantizer, dim, cfg["nlist"], _METRIC_IP
+                    )
+                else:
+                    quantizer = faiss.IndexFlatL2(dim)
+                    index = faiss.IndexIVFFlat(
+                        quantizer, dim, cfg["nlist"], faiss.METRIC_L2
+                    )
             elif cfg["index_type"] == "FLAT":
                 if is_cosine:
                     index = faiss.IndexFlatIP(dim)

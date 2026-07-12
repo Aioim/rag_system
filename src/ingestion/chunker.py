@@ -116,6 +116,13 @@ class HierarchicalChunker(_BaseSplitter):
         for c, hp in zip(chunks, heading_paths):
             c.metadata["heading_path"] = hp
 
+        # 短章节间添加 overlap，保持上下文连续性
+        if self.overlap > 0 and len(chunks) > 1:
+            for i in range(1, len(chunks)):
+                prev_end = chunks[i - 1].text[-self.overlap:]
+                if prev_end:
+                    chunks[i].text = prev_end + chunks[i].text
+
         return chunks
 
 
@@ -202,8 +209,8 @@ class SemanticChunker(_BaseSplitter):
         return chunks
 
     def _split_sentences(self, text: str) -> list[str]:
-        """按标点拆分句子"""
-        raw = re.split(r"(?<=[。！？；\n\.\!\?\;])", text)
+        """按句末标点拆分句子（不按 \\n 拆分，避免破坏代码块/表格）"""
+        raw = re.split(r"(?<=[。！？\.\!\?])\s*", text)
         return [s for s in raw if s.strip()]
 
     def _merge_short_segments(self, segments: list[str]) -> list[str]:
@@ -211,12 +218,13 @@ class SemanticChunker(_BaseSplitter):
         merged = []
         buffer = ""
         for seg in segments:
-            # 超长段拆分
+            # 超长段拆分（不在此处做 overlap，统一由外部滑动窗口处理）
             if self._estimate_tokens(seg) > self.chunk_size:
                 if buffer.strip():
                     merged.append(buffer)
                     buffer = ""
-                for start in range(0, len(seg), max(self.chunk_size - self.overlap, 1)):
+                step = max(self.chunk_size, 1)
+                for start in range(0, len(seg), step):
                     sub = seg[start: start + self.chunk_size]
                     if sub.strip():
                         merged.append(sub)

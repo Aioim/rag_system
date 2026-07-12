@@ -41,7 +41,9 @@ class IngestionPipeline:
         # 2. 遍历 stages
         for stage in self.stages:
             stage_name = getattr(stage, "name", "unknown")
-            stage_fatal = getattr(stage, "fatal", True)
+            stage_fatal = getattr(stage, "fatal", None)
+            if stage_fatal is None:
+                stage_fatal = True  # 未知阶段默认视为 fatal
             ctx.current_stage = stage_name
             t0 = time.perf_counter()
             try:
