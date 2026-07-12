@@ -39,7 +39,10 @@ class TrainingConfig(BaseModel):
 class DistillationConfig(BaseModel):
     """蒸馏参数（仅 LLM）"""
 
-    temperature: float = Field(default=2.0, gt=0.0, description="软化教师分布的温度")
+    temperature: float = Field(
+        default=2.0, gt=0.0,
+        description="软化教师分布的温度（预留，当前未使用）"
+    )
     alpha: float = Field(
         default=0.5, ge=0.0, le=1.0,
         description="硬标签权重（0=纯蒸馏，1=纯SFT）"

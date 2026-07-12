@@ -82,7 +82,7 @@ class TestLLMTrainer:
 
             config = FinetuneConfig()
             trainer = LLMTrainer(config, "test/model", teacher_model=None)
-            with pytest.raises(ValueError, match="--teacher"):
+            with pytest.raises(ValueError, match="teacher_model"):
                 trainer.generate_teacher_labels(data_path)
 
     def test_format_prompt(self):

@@ -3,6 +3,7 @@ LLM 微调 & 蒸馏 — SFT 微调 + 云端大模型黑盒蒸馏
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -91,7 +92,7 @@ class LLMTrainer(BaseTrainer):
         已存在的跳过，便于 API 调用失败后重试。
         """
         if self.teacher_model is None:
-            raise ValueError("必须指定 --teacher 才能生成教师标签")
+            raise ValueError("必须指定 teacher_model 参数才能生成教师标签")
 
         records = load_jsonl(data_path)
         validate_llm_data(records)
@@ -107,7 +108,8 @@ class LLMTrainer(BaseTrainer):
                     key = (r.get("instruction", ""), r.get("input", ""))
                     existing[key] = r[self._TEACHER_OUTPUT_FIELD]
 
-        with open(output_path, "w", encoding="utf-8") as f:
+        tmp_path = output_path.with_suffix(".jsonl.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             for i, r in enumerate(records):
                 key = (r.get("instruction", ""), r.get("input", ""))
                 if key in existing:
@@ -123,6 +125,7 @@ class LLMTrainer(BaseTrainer):
                     from logger import logger
                     logger.info(f"教师标签生成进度: {i + 1}/{len(records)}")
 
+        os.replace(tmp_path, output_path)
         return output_path
 
     def _call_teacher(self, instruction: str, input_text: str) -> str:
@@ -155,7 +158,7 @@ class LLMTrainer(BaseTrainer):
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
-            model="claude-sonnet-5-20250901",
+            model=self.teacher_model,
             max_tokens=2048,
             messages=[{"role": "user", "content": f"{instruction}\n\n{input_text}"}],
         )
@@ -218,6 +221,20 @@ class LLMTrainer(BaseTrainer):
         )
         tokenized["labels"] = tokenized["input_ids"].copy()
 
+        # Mask input tokens — only response tokens should contribute to loss
+        prefix_texts = [
+            self._format_prompt(inst, inp, "")
+            for inst, inp in zip(examples["instruction"], examples["input"])
+        ]
+        prefix_tokenized = self._tokenizer(
+            prefix_texts,
+            truncation=True,
+            max_length=self.config.training.max_seq_length,
+        )
+        for i in range(len(tokenized["labels"])):
+            prefix_len = len(prefix_tokenized["input_ids"][i])
+            tokenized["labels"][i][:prefix_len] = [-100] * prefix_len
+
         # Teacher labels (distillation mode)
         if "teacher_output" in examples and examples["teacher_output"][0]:
             teacher_prompts = [
@@ -233,6 +250,11 @@ class LLMTrainer(BaseTrainer):
                 max_length=self.config.training.max_seq_length,
             )
             tokenized["teacher_labels"] = teacher_tokenized["input_ids"].copy()
+
+            # Mask input tokens for teacher labels too
+            for i in range(len(tokenized["teacher_labels"])):
+                prefix_len = len(prefix_tokenized["input_ids"][i])
+                tokenized["teacher_labels"][i][:prefix_len] = [-100] * prefix_len
 
         return tokenized
 
