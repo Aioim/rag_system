@@ -23,13 +23,15 @@ class ParserStage:
         if ctx.document.file_type in ("md", "markdown"):
             ctx.document.raw_text = source_path.read_text(encoding="utf-8")
         else:
-            with ParserStage._converter_lock:
-                if ParserStage._converter is None:
-                    from docling.document_converter import DocumentConverter
+            # 线程安全的延迟初始化
+            if ParserStage._converter is None:
+                with ParserStage._converter_lock:
+                    if ParserStage._converter is None:
+                        from docling.document_converter import DocumentConverter
 
-                    ParserStage._converter = DocumentConverter()
+                        ParserStage._converter = DocumentConverter()
 
-                result = ParserStage._converter.convert(str(source_path))
+            result = ParserStage._converter.convert(str(source_path))
             ctx.document.raw_text = result.document.export_to_markdown()
 
         ctx.document.metadata.setdefault("source_path", str(source_path))
