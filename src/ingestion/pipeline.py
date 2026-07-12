@@ -47,7 +47,13 @@ class IngestionPipeline:
             ctx.current_stage = stage_name
             t0 = time.perf_counter()
             try:
-                ctx = await stage.run(ctx)
+                result = await stage.run(ctx)
+                if result is None:
+                    raise RuntimeError(
+                        f"Stage [{stage_name}] 返回了 None，"
+                        "所有 Stage 必须返回 PipelineContext"
+                    )
+                ctx = result
             except Exception as e:
                 ctx.errors.append(
                     StageError(stage=stage_name, error=str(e), fatal=stage_fatal)

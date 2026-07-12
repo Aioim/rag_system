@@ -81,7 +81,7 @@ class HierarchicalChunker(_BaseSplitter):
         if not text.strip():
             return []
 
-        sections = re.split(r"(?=^#{1,3}\s)", text, flags=re.MULTILINE)
+        sections = re.split(r"(?=^#{1,3}\s?)", text, flags=re.MULTILINE)
 
         heading_stack = []
         text_segments = []
@@ -91,7 +91,7 @@ class HierarchicalChunker(_BaseSplitter):
             if not section.strip():
                 continue
 
-            heading_match = re.match(r"^(#{1,3})\s+(.+)", section)
+            heading_match = re.match(r"^(#{1,3})\s*(.+)", section)
             if heading_match:
                 level = len(heading_match.group(1))
                 heading_text = heading_match.group(2).strip()
@@ -102,7 +102,7 @@ class HierarchicalChunker(_BaseSplitter):
 
             content = section
             if len(content) > self.chunk_size:
-                step = max(self.chunk_size - self.overlap, 1)
+                step = max(self.chunk_size, 1)  # 不在此处做 overlap，统一由外部处理
                 for i in range(0, len(content), step):
                     seg = content[i: i + self.chunk_size]
                     if seg.strip():
@@ -209,8 +209,8 @@ class SemanticChunker(_BaseSplitter):
         return chunks
 
     def _split_sentences(self, text: str) -> list[str]:
-        """按句末标点拆分句子（不按 \\n 拆分，避免破坏代码块/表格）"""
-        raw = re.split(r"(?<=[。！？\.\!\?])\s*", text)
+        """按句末标点拆分句子（不按 \\n 拆分，保留句间空白）"""
+        raw = re.split(r"(?<=[。！？\.\!\?])", text)
         return [s for s in raw if s.strip()]
 
     def _merge_short_segments(self, segments: list[str]) -> list[str]:

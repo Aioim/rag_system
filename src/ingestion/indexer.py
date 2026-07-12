@@ -76,7 +76,7 @@ class FAISSIndexWriter:
             index = faiss.read_index(str(index_path))
             actual_type = type(index).__name__.upper()
             config_type = cfg["index_type"].upper().replace("_", "")
-            if config_type not in actual_type:
+            if not actual_type.endswith(config_type):
                 logger.warning(
                     "磁盘索引类型 %s 与配置 index_type=%s 不一致，使用磁盘索引",
                     actual_type, cfg["index_type"],
@@ -100,7 +100,14 @@ class FAISSIndexWriter:
                 else:
                     index = faiss.IndexFlatL2(dim)
             else:
-                index = faiss.IndexFlatIP(dim)
+                if is_cosine:
+                    index = faiss.IndexFlatIP(dim)
+                else:
+                    index = faiss.IndexFlatL2(dim)
+
+        # COSINE: 训练前归一化，确保 IVF 质心与存储向量在同一空间
+        if is_cosine:
+            faiss.normalize_L2(vectors)
 
         # 训练 IVF
         if isinstance(index, faiss.IndexIVFFlat) and not index.is_trained:
@@ -112,10 +119,6 @@ class FAISSIndexWriter:
                     index = faiss.IndexFlatIP(expected_dim)
                 else:
                     index = faiss.IndexFlatL2(expected_dim)
-
-        # COSINE: normalize
-        if is_cosine:
-            faiss.normalize_L2(vectors)
 
         # 添加向量
         start_id = index.ntotal
