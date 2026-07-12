@@ -58,3 +58,38 @@ class TestFinetuneAPI:
             from model.finetune.base import BaseTrainer
             scanned = BaseTrainer.scan_finetuned(Path(tmp))
             assert scanned.get("nonexistent") is None
+
+    def test_aliases_resolve_reranker(self):
+        """"reranker" 应被别名解析为 "rerank" 以匹配配置"""
+        from model.manager import _MODEL_TYPE_ALIASES
+        assert _MODEL_TYPE_ALIASES["reranker"] == "rerank"
+
+    def test_overrides_reaches_lora_and_distillation(self):
+        """**overrides 应能写入 cfg.lora 和 cfg.distillation"""
+        from model.finetune.config import FinetuneConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            data_path = tmp / "test.jsonl"
+            _make_triplet_jsonl(data_path, count=3)
+
+            config = FinetuneConfig(output_dir=tmp)
+
+            # 使用一个必定不在 _defaults 中的类型名，
+            # 确保 finetune() 在 overrides 循环之后因类型校验而失败，
+            # 不会进入实际创建 Trainer 的步骤
+            try:
+                models.finetune(
+                    "definitely_not_a_valid_type",
+                    str(data_path),
+                    config=config,
+                    r=16,
+                    alpha=0.3,
+                )
+            except (ValueError, Exception):
+                pass
+
+            assert config.lora.r == 16, f"lora.r 应为 16，实际: {config.lora.r}"
+            assert config.distillation.alpha == 0.3, (
+                f"distillation.alpha 应为 0.3，实际: {config.distillation.alpha}"
+            )

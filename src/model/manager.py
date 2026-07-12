@@ -15,6 +15,11 @@ from config import settings
 from logger import logger
 from .downloader import ModelDownloader
 
+# "reranker" → "rerank" 等类型别名映射（默认配置中以短名称存储）
+_MODEL_TYPE_ALIASES: dict[str, str] = {
+    "reranker": "rerank",
+}
+
 
 class ModelManager:
     """模型管理器 — 线程安全单例
@@ -199,18 +204,26 @@ class ModelManager:
         # 解析配置
         cfg = config or get_finetune_config()
 
+        # 解析类型别名（"reranker" → "rerank"）
+        resolved_type = _MODEL_TYPE_ALIASES.get(model_type, model_type)
+
         # 应用 overrides
         for key, value in overrides.items():
             if hasattr(cfg.training, key):
                 setattr(cfg.training, key, value)
+            elif hasattr(cfg.lora, key):
+                setattr(cfg.lora, key, value)
+            elif hasattr(cfg.distillation, key):
+                setattr(cfg.distillation, key, value)
 
         # 解析基座模型
-        if model_type not in self._defaults:
+        if resolved_type not in self._defaults:
             raise ValueError(
-                f"不支持的模型类型: {model_type}，"
-                f"可选: {list(self._defaults.keys())}"
+                f"不支持的模型类型: {model_type}（解析后: {resolved_type}），"
+                f"可选: {list(self._defaults.keys())}，"
+                f"别名: {list(_MODEL_TYPE_ALIASES.keys())}"
             )
-        base_model_id = self._defaults[model_type]
+        base_model_id = self._defaults[resolved_type]
 
         # 选择 Trainer
         data_path = Path(data_path)
