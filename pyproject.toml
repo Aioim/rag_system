@@ -50,11 +50,9 @@ retrieval = [
 
 # 离线文档处理 Pipeline（异步）
 ingestion = [
-    "arq>=0.26",                # 轻量异步任务队列
-    "PyMuPDF>=1.24",            # PDF 解析
-    "python-docx>=0.8",         # Word 解析
-    "Pillow>=10.0",             # 图片处理
-    "markdown>=3.7",            # Markdown 解析
+    "arq>=0.26",                # 轻量异步任务队列（预留）
+    "docling>=2.0",             # 多格式文档解析（PDF/Word/PPT/HTML/Markdown）
+    "Pillow>=10.0",             # 图片处理（预留 MultiModalStage）
 ]
 
 # 开发 & 测试
@@ -108,7 +106,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["config", "logger", "security", "model"]
+known-first-party = ["config", "logger", "security", "model", "ingestion"]
 
 [tool.ruff.format]
 quote-style = "double"
