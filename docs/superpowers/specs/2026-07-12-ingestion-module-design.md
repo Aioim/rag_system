@@ -231,6 +231,7 @@ ctx.chunks (无 embedding)
 ### 设计决策
 
 - 不在此 Stage 加载模型——通过 `models.get_path("embedding")` 获取路径，模型加载/缓存由 model manager 负责。实际模型实例由工厂函数传入，与 ChunkerStage（SemanticChunker）**共享同一实例**
+- **模型调用接口**：`model.encode(texts: list[str]) -> list[ndarray]`（SentenceTransformer 原生接口），SemanticChunker 和 Embedder 都通过此接口调用
 - 批量推理：chunks 按 batch_size 分批
 - 幂等：已带 embedding 的 chunk 自动跳过
 - 空 chunks 时跳过，记录 info 日志
@@ -395,8 +396,13 @@ class IngestionPipeline:
 ```python
 # ingestion/__init__.py
 def create_default_pipeline() -> IngestionPipeline:
-    # 加载 embedding 模型一次，Chunker（SemanticChunker）和 Embedder 共享
-    embedding_model = models.load("embedding")
+    from sentence_transformers import SentenceTransformer
+
+    # 通过 model manager 获取本地路径，再用 SentenceTransformer 加载
+    model_path = models.get_path("embedding")
+    if model_path is None:
+        raise RuntimeError("Embedding 模型未下载，请先运行 models.download('embedding')")
+    embedding_model = SentenceTransformer(str(model_path))  # encode(texts) → list[ndarray]
 
     return IngestionPipeline(
         stages=[
