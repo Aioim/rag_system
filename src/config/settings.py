@@ -56,6 +56,8 @@ class ChunkingConfig(_BaseConfig):
     chunk_size: int = 512
     overlap: int = 64
     strategy: str = "semantic"
+    semantic_threshold_percentile: float = 0.9
+    semantic_buffer_size: int = 1
 
 
 class SessionConfig(_BaseConfig):
