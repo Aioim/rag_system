@@ -1,22 +1,27 @@
 """
-模型管理模块 — 统一下载和管理 embedding / rerank / 本地 LLM 模型
+模型管理模块 — 统一下载和管理 embedding / rerank / 本地 LLM 模型，
+以及微调和蒸馏训练。
 
 使用示例：
     from model import models
 
-    # 下载所有默认模型
+    # 下载
     models.download_all()
-
-    # 按类型下载
     models.download("embedding")
 
-    # 查询
-    models.status()              # → {"embedding": True, "rerank": False, "llm": False}
-    models.get_path("embedding") # → Path 或 None
-    models.list_downloaded()     # → {model_id: local_path, ...}
+    # 微调
+    result = models.finetune("embedding", data_path="data/finetune/triplets.jsonl")
+
+    # 蒸馏
+    result = models.finetune("llm", data_path="...", teacher="claude-sonnet-5")
+
+    # 管理
+    models.list_finetuned()
+    models.get_finetuned_path("my-lora")
+    models.remove_finetuned("my-lora")
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .manager import ModelManager, models
 from .downloader import ModelDownloader

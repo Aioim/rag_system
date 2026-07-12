@@ -5,7 +5,11 @@
 import os
 import threading
 from pathlib import Path
-from typing import ClassVar, Optional, Dict, List
+from typing import ClassVar, Optional, Dict, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .finetune.config import FinetuneConfig
+    from .finetune.base import FinetuneResult, FinetuneInfo
 
 from config import settings
 from logger import logger
@@ -157,6 +161,104 @@ class ModelManager:
             if self._downloader.remove(model_id):
                 count += 1
         return count
+
+    # ========================================================================
+    # 微调 API
+    # ========================================================================
+
+    def finetune(
+        self,
+        model_type: str,
+        data_path: str,
+        output_name: Optional[str] = None,
+        teacher: Optional[str] = None,
+        config: Optional["FinetuneConfig"] = None,
+        **overrides,
+    ) -> "FinetuneResult":
+        """微调指定类型的模型。
+
+        Args:
+            model_type: "embedding" | "reranker" | "llm"
+            data_path: JSONL 训练数据路径
+            output_name: 适配器名称（默认自动生成）
+            teacher: 蒸馏教师模型 ID（仅 llm）
+            config: 微调配置（默认从 YAML 加载）
+            **overrides: 覆盖训练参数，如 epochs=5, batch_size=4
+
+        Returns:
+            FinetuneResult with adapter_path, metrics, etc.
+        """
+        from .finetune.config import FinetuneConfig, get_finetune_config
+        from .finetune.embedding_trainer import EmbeddingTrainer
+        from .finetune.reranker_trainer import RerankerTrainer
+        from .finetune.llm_trainer import LLMTrainer
+        from .finetune.base import FinetuneResult
+
+        self._ensure_init()
+
+        # 解析配置
+        cfg = config or get_finetune_config()
+
+        # 应用 overrides
+        for key, value in overrides.items():
+            if hasattr(cfg.training, key):
+                setattr(cfg.training, key, value)
+
+        # 解析基座模型
+        if model_type not in self._defaults:
+            raise ValueError(
+                f"不支持的模型类型: {model_type}，"
+                f"可选: {list(self._defaults.keys())}"
+            )
+        base_model_id = self._defaults[model_type]
+
+        # 选择 Trainer
+        data_path = Path(data_path)
+        trainer_classes = {
+            "embedding": EmbeddingTrainer,
+            "reranker": RerankerTrainer,
+            "llm": LLMTrainer,
+        }
+
+        trainer_cls = trainer_classes[model_type]
+        if model_type == "llm" and teacher:
+            trainer = LLMTrainer(cfg, base_model_id, teacher_model=teacher)
+        else:
+            trainer = trainer_cls(cfg, base_model_id)
+
+        logger.info(
+            f"开始微调 [{model_type}] base={base_model_id} data={data_path}"
+            + (f" teacher={teacher}" if teacher else "")
+        )
+
+        return trainer.run(data_path, output_name=output_name)
+
+    def list_finetuned(self) -> Dict[str, "FinetuneInfo"]:
+        """列出所有已微调的适配器，返回 {name: FinetuneInfo}"""
+        self._ensure_init()
+        from .finetune.config import get_finetune_config
+        from .finetune.base import BaseTrainer
+        from config.path import PROJECT_ROOT
+
+        cfg = get_finetune_config()
+        output_dir = cfg.resolve_output_dir(PROJECT_ROOT)
+        return BaseTrainer.scan_finetuned(output_dir)
+
+    def get_finetuned_path(self, name: str) -> Optional[Path]:
+        """获取指定适配器的本地路径"""
+        adapters = self.list_finetuned()
+        info = adapters.get(name)
+        return info.adapter_path if info else None
+
+    def remove_finetuned(self, name: str) -> bool:
+        """删除指定适配器，成功返回 True"""
+        import shutil
+        path = self.get_finetuned_path(name)
+        if path is None:
+            return False
+        shutil.rmtree(path)
+        logger.info(f"已删除微调适配器: {name} ({path})")
+        return True
 
     # ========================================================================
     # 内部方法
