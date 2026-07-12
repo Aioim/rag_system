@@ -65,9 +65,16 @@ dev = [
     "ruff>=0.8",
 ]
 
+# 微调（LoRA / 蒸馏 / 全量微调）
+finetune = [
+    "peft>=0.12.0",
+    "datasets>=2.19.0",
+    "accelerate>=0.30.0",
+]
+
 # 全部依赖
 all = [
-    "rag-service[retrieval,ingestion,dev]",
+    "rag-service[retrieval,ingestion,dev,finetune]",
 ]
 
 # ---- CLI 入口（后续随模块实现逐步添加） --------------------------------
