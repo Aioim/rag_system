@@ -172,14 +172,14 @@ class SemanticChunker(_BaseSplitter):
         # 4. 取 percentile 作为阈值
         threshold = np.percentile(similarities, self.threshold_percentile * 100)
 
-        # 5. 标记切分点（应用 buffer）
+        # 5. 标记切分点（应用 buffer 抑制邻近重复切分）
+        raw_cuts = sorted(i + 1 for i, sim in enumerate(similarities) if sim < threshold)
         cut_points = set()
-        for i, sim in enumerate(similarities):
-            if sim < threshold:
-                for offset in range(-self.buffer_size, self.buffer_size + 1):
-                    idx = i + offset
-                    if 0 <= idx < len(similarities):
-                        cut_points.add(idx + 1)
+        last_cut = -self.buffer_size - 1
+        for cut in raw_cuts:
+            if cut - last_cut > self.buffer_size:
+                cut_points.add(cut)
+                last_cut = cut
 
         # 6. 按切分点合并句子
         text_segments = []
@@ -224,8 +224,9 @@ class SemanticChunker(_BaseSplitter):
                     merged.append(buffer)
                     buffer = ""
                 step = max(self.chunk_size, 1)
-                for start in range(0, len(seg), step):
-                    sub = seg[start: start + self.chunk_size]
+                for start in range(0, self._estimate_tokens(seg), step):
+                    end = min(start + self.chunk_size, len(seg))
+                    sub = seg[start:end]
                     if sub.strip():
                         merged.append(sub)
                 continue
