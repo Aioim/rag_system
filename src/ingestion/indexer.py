@@ -6,6 +6,19 @@ from pathlib import Path
 import faiss
 import numpy as np
 
+from logger import logger
+
+
+def _sanitize_metadata(meta: dict) -> dict:
+    """将 metadata 中的非 JSON 可序列化值转为字符串"""
+    safe = {}
+    for k, v in meta.items():
+        if isinstance(v, (str, int, float, bool, type(None), list, dict)):
+            safe[k] = v
+        else:
+            safe[k] = str(v)
+    return safe
+
 
 class FAISSIndexWriter:
     """将带 embedding 的 chunks 写入 FAISS 索引 + docstore"""
@@ -46,15 +59,27 @@ class FAISSIndexWriter:
         vectors = np.array([c.embedding for c in chunks], dtype=np.float32)
 
         # 加载或创建 FAISS 索引
+        is_cosine = cfg["metric_type"] == "COSINE"
         if index_path.exists():
             index = faiss.read_index(str(index_path))
+            actual_type = type(index).__name__
+            if cfg["index_type"] not in actual_type and cfg["index_type"] != "IVF_FLAT":
+                logger.warning(
+                    "磁盘索引类型 %s 与配置 index_type=%s 不一致，使用磁盘索引",
+                    actual_type, cfg["index_type"],
+                )
         else:
             dim = expected_dim
             if cfg["index_type"] == "IVF_FLAT":
                 quantizer = faiss.IndexFlatIP(dim)
-                index = faiss.IndexIVFFlat(quantizer, dim, cfg["nlist"])
-                if cfg["metric_type"] == "COSINE":
-                    faiss.normalize_L2(vectors)
+                index = faiss.IndexIVFFlat(
+                    quantizer, dim, cfg["nlist"], faiss.METRIC_INNER_PRODUCT
+                )
+            elif cfg["index_type"] == "FLAT":
+                if is_cosine:
+                    index = faiss.IndexFlatIP(dim)
+                else:
+                    index = faiss.IndexFlatL2(dim)
             else:
                 index = faiss.IndexFlatIP(dim)
 
@@ -63,10 +88,14 @@ class FAISSIndexWriter:
             if len(vectors) >= cfg["nlist"]:
                 index.train(vectors)
             else:
-                index = faiss.IndexFlatIP(expected_dim)
+                # 向量不足时降级为 Flat，保留 metric 语义
+                if is_cosine:
+                    index = faiss.IndexFlatIP(expected_dim)
+                else:
+                    index = faiss.IndexFlatL2(expected_dim)
 
         # COSINE: normalize
-        if cfg["metric_type"] == "COSINE":
+        if is_cosine:
             faiss.normalize_L2(vectors)
 
         # 添加向量
@@ -90,7 +119,7 @@ class FAISSIndexWriter:
             if c.next_chunk_id:
                 entry["next_chunk_id"] = c.next_chunk_id
             if c.metadata:
-                entry["metadata"] = c.metadata
+                entry["metadata"] = _sanitize_metadata(c.metadata)
             new_entries[c.chunk_id] = entry
 
         existing_docstore.update(new_entries)

@@ -99,17 +99,18 @@ class HierarchicalChunker(_BaseSplitter):
                 heading_stack.append(heading_text)
 
             heading_path = " > ".join(heading_stack) if heading_stack else ""
-            heading_paths.append(heading_path)
 
             content = section
             if len(content) > self.chunk_size:
-                for i in range(0, len(content), self.chunk_size - self.overlap):
+                step = max(self.chunk_size - self.overlap, 1)
+                for i in range(0, len(content), step):
                     seg = content[i: i + self.chunk_size]
                     if seg.strip():
                         text_segments.append(seg)
                         heading_paths.append(heading_path)
             else:
                 text_segments.append(content)
+                heading_paths.append(heading_path)
 
         chunks = self._build_chunks(text_segments)
         for c, hp in zip(chunks, heading_paths):
@@ -210,6 +211,17 @@ class SemanticChunker(_BaseSplitter):
         merged = []
         buffer = ""
         for seg in segments:
+            # 超长段拆分
+            if self._estimate_tokens(seg) > self.chunk_size:
+                if buffer.strip():
+                    merged.append(buffer)
+                    buffer = ""
+                for start in range(0, len(seg), max(self.chunk_size - self.overlap, 1)):
+                    sub = seg[start: start + self.chunk_size]
+                    if sub.strip():
+                        merged.append(sub)
+                continue
+
             if self._estimate_tokens(buffer + seg) <= self.chunk_size:
                 buffer += seg
             else:
@@ -257,8 +269,8 @@ class ChunkerStage:
                 embedding_model=self.embedding_model,
                 chunk_size=cfg.chunk_size,
                 overlap=cfg.overlap,
-                threshold_percentile=getattr(cfg, "semantic_threshold_percentile", 0.9),
-                buffer_size=getattr(cfg, "semantic_buffer_size", 1),
+                threshold_percentile=cfg.semantic_threshold_percentile,
+                buffer_size=cfg.semantic_buffer_size,
             )
         elif strategy == "fixed":
             splitter = FixedChunker(

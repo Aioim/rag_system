@@ -33,6 +33,7 @@ class EmbedderStage:
         for i in range(0, len(pending), batch_size):
             batch = pending[i: i + batch_size]
             texts = [c.text for c in batch]
+            # TODO: 将同步 encode 提交到线程池避免阻塞 asyncio 事件循环
             embeddings = self.embedding_model.encode(texts)
             for c, emb in zip(batch, embeddings):
                 c.embedding = emb.tolist() if hasattr(emb, "tolist") else list(emb)
