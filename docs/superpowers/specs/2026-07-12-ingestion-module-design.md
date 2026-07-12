@@ -64,7 +64,7 @@ src/ingestion/
 ├── pipeline.py          # IngestionPipeline 编排器
 ├── stage.py             # Stage 基类 / 协议
 ├── context.py           # PipelineContext + 内置 Document/Chunk 模型
-├── parser.py            # ParserStage — PDF/Word/Markdown → 纯文本 + 表格结构化
+├── parser.py            # ParserStage — PDF/Word/Markdown → Markdown（基于 docling）
 ├── chunker.py           # ChunkerStage — 语义/固定/层级 三种分块策略
 ├── embedder.py          # EmbedderStage — 调用 model manager 批量 embedding
 ├── indexer.py           # FAISSIndexWriter — FAISS 索引写入
@@ -86,27 +86,36 @@ Data models（Document、Chunk）先内置在 `context.py`，后续提取到 `sr
 
 | 格式 | 解析库 | 优先级 |
 |------|--------|--------|
-| `application/pdf` | PyMuPDF (fitz) | P0 |
-| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | python-docx | P0 |
-| `text/markdown` | stdlib + 正则去标记 | P0 |
-| `text/html` | BeautifulSoup → 去标签 + 保留结构 | P1（预留） |
+| `application/pdf` | docling | P0 |
+| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | docling | P0 |
+| `text/markdown` | docling（或 stdlib 直读） | P0 |
+| `text/html` | docling | P1（预留） |
+
+### 为什么选 docling
+
+- IBM 开源（MIT 协议），LF AI & Data 基金会托管
+- 统一 API 处理 PDF/Word/PPT/HTML/Markdown 等多种格式
+- 内置布局分析（DocLayNet）、表格提取（TableFormer）、阅读顺序检测
+- 输出统一为 Markdown/JSON，自带表格结构化
+- 完全本地运行，无需云服务
+- 一期不再需要 PyMuPDF + python-docx 双库，减少依赖
 
 ### 输入/输出
 
 ```
 输入: ctx.document.source_path  (Path)
       ctx.document.file_type     (str)
-输出: ctx.document.raw_text      (str)
-      ctx.document.pages         (list[Page] | None) — PDF 保留页码信息
+输出: ctx.document.raw_text      (str) — Markdown 格式
       ctx.document.metadata      (dict) — 标题、作者、页数等
 ```
 
 ### 设计决策
 
-- **统一输出为纯文本**，结构信息用标记保留（如 `## 标题`、`| 表格行 |`）
-- **表格处理（第一期）**：PDF 表格提取为 Markdown 表格格式；Word 表格同样转换；图片不处理
-- 解析失败记录到 `ctx.errors`，不中断 pipeline（标记 `fatal=True`，下游判断 `raw_text` 是否为空）
-- 通过文件扩展名 + MIME 双重检测格式，不一致时以 MIME 为准
+- **统一输出为 Markdown**，docling 原生支持，结构信息自然保留
+- **表格处理**：docling 内置 TableFormer 模型，PDF/Word 表格自动转为 Markdown 表格
+- **图片处理（第一期不处理）**：docling 支持 VLM 图片描述（GraniteDocling），但不启用，图片仅保留占位标记
+- 解析失败记录到 `ctx.errors`，中断 pipeline（标记 `fatal=True`，下游判断 `raw_text` 是否为空）
+- 通过 docling 自动检测格式，无需手动 MIME 判断
 
 ---
 
@@ -169,7 +178,7 @@ chunking:
 
 ### 设计决策
 
-- 三种 splitter 同接口：`split(text: str) -> list[Chunk]`，ChunkerStage 不关心具体策略
+- 三种 splitter 同接口：`splitter(text: str) -> list[Chunk]`，ChunkerStage 不关心具体策略
 - ChunkerStage 根据 `settings.chunking.strategy` 选择 splitter 实例
 - Token 计数用中文字数估算（1 字 ≈ 1 token），一期不引入 tokenizer
 - 重叠按 token 数计算而非字符数
@@ -432,5 +441,5 @@ model:
 - **ContextualRetrievalStage**：chunk embedding 前拼接文档上下文摘要（架构已预留 `contextual.py`，Chunk 已预留 `context_summary` 字段）
 - **异步队列**：Celery/ARQ 异步处理（当前同步接口，后续 `IngestionPipeline.run()` 可包装为异步任务）
 - **增量去重**：同一文档重新上传时，检测并替换旧 chunks（FAISS IVF 不支持原生 delete，需额外实现）
-- **HTML 解析**：BeautifulSoup 解析器（Parser 已预留入口）
+- **HTML 解析**：docling 已支持 HTML，第一期如需可直接启用
 - **更多分块策略**：Late Chunking、Small-to-Big 检索（Chunker 的三策略接口已支持扩展）
