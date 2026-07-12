@@ -71,7 +71,7 @@ class FAISSIndexWriter:
 
         # 加载或创建 FAISS 索引
         is_cosine = cfg["metric_type"] == "COSINE"
-        _METRIC_IP = getattr(faiss, "METRIC_INNER_PRODUCT", 10)
+        _METRIC_IP = getattr(faiss, "METRIC_INNER_PRODUCT", 0)
         if index_path.exists():
             index = faiss.read_index(str(index_path))
             actual_type = type(index).__name__.upper()
