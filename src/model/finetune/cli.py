@@ -81,15 +81,19 @@ def _apply_overrides(config: FinetuneConfig, args: argparse.Namespace) -> None:
         config.distillation.alpha = args.alpha
 
 
+_MODEL_TYPE_ALIASES = {"reranker": "rerank"}
+
+
 def _get_base_model(model_type: str, args) -> str:
     """解析基座模型 ID"""
     base = getattr(args, "base_model", None)
     if base:
         return base
+    resolved = _MODEL_TYPE_ALIASES.get(model_type, model_type)
     try:
         from model import models
         models._ensure_init()
-        return models._defaults.get(model_type, "")
+        return models._defaults.get(resolved, "")
     except Exception:
         pass
     return ""
