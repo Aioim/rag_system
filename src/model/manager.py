@@ -16,9 +16,7 @@ from logger import logger
 from .downloader import ModelDownloader
 
 # "reranker" → "rerank" 等类型别名映射（默认配置中以短名称存储）
-_MODEL_TYPE_ALIASES: dict[str, str] = {
-    "reranker": "rerank",
-}
+from .finetune.aliases import _MODEL_TYPE_ALIASES
 
 
 class ModelManager:
@@ -201,8 +199,13 @@ class ModelManager:
 
         self._ensure_init()
 
-        # 解析配置
-        cfg = config or get_finetune_config()
+        # 解析配置（有 overrides 时创建新实例，避免污染缓存单例）
+        if config is not None:
+            cfg = config
+        elif overrides:
+            cfg = FinetuneConfig()  # 新鲜默认值，不修改缓存
+        else:
+            cfg = get_finetune_config()
 
         # 解析类型别名（"reranker" → "rerank"）
         resolved_type = _MODEL_TYPE_ALIASES.get(model_type, model_type)
@@ -229,12 +232,12 @@ class ModelManager:
         data_path = Path(data_path)
         trainer_classes = {
             "embedding": EmbeddingTrainer,
-            "reranker": RerankerTrainer,
+            "rerank": RerankerTrainer,
             "llm": LLMTrainer,
         }
 
-        trainer_cls = trainer_classes[model_type]
-        if model_type == "llm" and teacher:
+        trainer_cls = trainer_classes[resolved_type]
+        if resolved_type == "llm" and teacher:
             trainer = LLMTrainer(cfg, base_model_id, teacher_model=teacher)
         else:
             trainer = trainer_cls(cfg, base_model_id)

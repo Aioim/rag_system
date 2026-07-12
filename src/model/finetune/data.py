@@ -87,7 +87,12 @@ def split_train_eval(
     """将数据按比例切分为训练集和验证集（保持原始顺序切分）"""
     if not 0.0 <= eval_ratio <= 1.0:
         raise ValueError(f"eval_ratio 必须在 [0, 1] 之间，实际: {eval_ratio}")
-    if eval_ratio == 0.0:
+    if eval_ratio >= 1.0:
+        return [], records
+    if eval_ratio <= 0.0:
         return records, []
     split_idx = max(1, int(len(records) * (1.0 - eval_ratio)))
+    # 确保至少 1 条 eval 数据
+    if split_idx >= len(records) and len(records) > 1:
+        split_idx = len(records) - 1
     return records[:split_idx], records[split_idx:]

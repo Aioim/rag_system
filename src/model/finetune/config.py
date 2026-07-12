@@ -41,7 +41,8 @@ class DistillationConfig(BaseModel):
 
     temperature: float = Field(
         default=2.0, gt=0.0,
-        description="软化教师分布的温度（预留，当前未使用）"
+        description="软化教师分布的温度。注意: 当前黑盒蒸馏模式下此参数未使用，"
+                    "仅在将来支持 logits 级别蒸馏时生效。"
     )
     alpha: float = Field(
         default=0.5, ge=0.0, le=1.0,

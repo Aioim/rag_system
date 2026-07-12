@@ -2,6 +2,7 @@
 微调基类 — BaseTrainer ABC + FinetuneResult + FinetuneInfo + metadata 管理
 """
 
+import os
 import time
 import json
 import yaml
@@ -127,6 +128,11 @@ class BaseTrainer(ABC):
 
     def _get_output_dir(self) -> Path:
         """返回适配器输出目录"""
+        if self._output_name is None:
+            raise RuntimeError(
+                "_output_name 未设置。请通过 run() 方法调用训练，"
+                "或在调用 train() 之前手动设置 _output_name。"
+            )
         from config.path import PROJECT_ROOT
         return self.config.resolve_output_dir(PROJECT_ROOT) / self._output_name
 
@@ -148,8 +154,15 @@ class BaseTrainer(ABC):
         }
         meta_path = result.adapter_path / "metadata.yaml"
         meta_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(meta_path, "w", encoding="utf-8") as f:
-            yaml.dump(meta, f, allow_unicode=True, default_flow_style=False)
+        tmp_path = meta_path.with_suffix(".yaml.tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                yaml.dump(meta, f, allow_unicode=True, default_flow_style=False)
+            os.replace(tmp_path, meta_path)
+        except Exception:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
 
     # ---- 静态工具方法（供 ModelManager 使用） ----
 
@@ -159,8 +172,13 @@ class BaseTrainer(ABC):
         meta_path = adapter_dir / "metadata.yaml"
         if not meta_path.exists():
             return None
-        with open(meta_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f)
+        except (yaml.YAMLError, OSError) as e:
+            from logger import logger
+            logger.warning(f"无法读取元数据文件 {meta_path}: {e}")
+            return None
 
     @staticmethod
     def scan_finetuned(output_dir: Path) -> dict[str, FinetuneInfo]:

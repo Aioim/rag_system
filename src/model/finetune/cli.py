@@ -81,7 +81,7 @@ def _apply_overrides(config: FinetuneConfig, args: argparse.Namespace) -> None:
         config.distillation.alpha = args.alpha
 
 
-_MODEL_TYPE_ALIASES = {"reranker": "rerank"}
+from .aliases import _MODEL_TYPE_ALIASES
 
 
 def _get_base_model(model_type: str, args) -> str:
@@ -94,8 +94,9 @@ def _get_base_model(model_type: str, args) -> str:
         from model import models
         models._ensure_init()
         return models._defaults.get(resolved, "")
-    except Exception:
-        pass
+    except (ImportError, AttributeError, KeyError) as e:
+        import sys
+        print(f"警告: 无法从配置获取默认模型: {e}", file=sys.stderr)
     return ""
 
 

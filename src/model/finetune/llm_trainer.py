@@ -32,7 +32,7 @@ class DistillationTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         teacher_labels = inputs.pop("teacher_labels", None)
-        labels = inputs.get("labels")
+        labels = inputs.pop("labels", None)
 
         outputs = model(**inputs)
         logits = outputs.logits
@@ -53,8 +53,15 @@ class DistillationTrainer(Trainer):
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_teacher.view(-1),
             )
+
+            if num_items_in_batch is not None:
+                hard_loss = hard_loss / num_items_in_batch
+                distill_loss = distill_loss / num_items_in_batch
+
             loss = self.alpha * hard_loss + (1.0 - self.alpha) * distill_loss
         else:
+            if num_items_in_batch is not None:
+                hard_loss = hard_loss / num_items_in_batch
             loss = hard_loss
 
         return (loss, outputs) if return_outputs else loss
@@ -156,13 +163,22 @@ class LLMTrainer(BaseTrainer):
             )
 
         import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model=self.teacher_model,
-            max_tokens=2048,
-            messages=[{"role": "user", "content": f"{instruction}\n\n{input_text}"}],
-        )
-        return message.content[0].text
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+                message = client.messages.create(
+                    model=self.teacher_model,
+                    max_tokens=2048,
+                    messages=[{"role": "user", "content": f"{instruction}\n\n{input_text}"}],
+                )
+                return message.content[0].text
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    raise
 
     # ---- 数据加载 ----
 
@@ -181,6 +197,16 @@ class LLMTrainer(BaseTrainer):
                     )
 
         train_records, eval_records = split_train_eval(records, eval_ratio=0.2)
+
+        # 警告：数据含 teacher_output 但 teacher_model 未设置
+        if self.teacher_model is None:
+            has_teacher_field = any(self._TEACHER_OUTPUT_FIELD in r for r in records)
+            if has_teacher_field:
+                import warnings
+                warnings.warn(
+                    f"数据中包含 '{self._TEACHER_OUTPUT_FIELD}' 字段，但 teacher_model 未设置。"
+                    f"将执行纯 SFT 训练，教师标签将被忽略。如需蒸馏请传入 teacher 参数。"
+                )
 
         def _to_dataset(recs: list[dict]) -> Dataset:
             data = {
@@ -236,7 +262,8 @@ class LLMTrainer(BaseTrainer):
             tokenized["labels"][i][:prefix_len] = [-100] * prefix_len
 
         # Teacher labels (distillation mode)
-        if "teacher_output" in examples and examples["teacher_output"][0]:
+        has_teacher = "teacher_output" in examples and any(t for t in examples["teacher_output"] if t)
+        if has_teacher:
             teacher_prompts = [
                 self._format_prompt(inst, inp, t_out)
                 for inst, inp, t_out in zip(

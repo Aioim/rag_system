@@ -73,7 +73,11 @@ class RerankerTrainer(BaseTrainer):
             self.base_model_id, num_labels=2
         )
         if self._tokenizer.pad_token is None:
-            self._tokenizer.pad_token = self._tokenizer.eos_token
+            if self._tokenizer.eos_token is not None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
+            else:
+                self._tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+                model.resize_token_embeddings(len(self._tokenizer))
         model.config.pad_token_id = self._tokenizer.pad_token_id
 
         # 2. 注入 LoRA
