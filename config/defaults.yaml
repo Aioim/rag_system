@@ -1,0 +1,134 @@
+# ============================================================================
+# RAG 企业级知识库问答系统 — 默认配置
+# 环境特定配置请创建 {env}.yaml（如 prod.yaml），格式与此文件一致
+# 环境变量覆盖使用双下划线表示嵌套，如 RETRIEVAL__TOP_K=10
+# ============================================================================
+
+# 项目信息
+project:
+  name: rag-enterprise-qa
+  version: "1.0.0"
+
+# 运行环境: dev | beta | prod
+env: dev
+
+debug: false
+
+# API 服务
+api:
+  host: 0.0.0.0
+  port: 8000
+  cors_origins:
+    - "*"
+  workers: 1
+
+# --------------------------------------------------------------------------
+# 检索配置
+# --------------------------------------------------------------------------
+retrieval:
+  top_k: 5
+  expansion_window: 1            # 上下文扩展窗口（向左右各拉 N 个 chunk）
+  rrf_k: 60                      # RRF 融合参数
+  mmr_lambda: 0.7                # MMR 多样性控制
+  relevance_threshold_sufficient: 0.5   # 结果充分 → 直接生成
+  relevance_threshold_need_more: 0.3    # 需要补充检索
+  similarity_dedup_threshold: 0.85      # 去重相似度阈值
+  max_context_tokens: 6000
+
+# --------------------------------------------------------------------------
+# 文档分块
+# --------------------------------------------------------------------------
+chunking:
+  chunk_size: 512
+  overlap: 64
+  strategy: semantic             # semantic | fixed | hierarchical
+
+# --------------------------------------------------------------------------
+# 会话管理
+# --------------------------------------------------------------------------
+session:
+  ttl_hours: 2
+  max_history_rounds: 10
+  max_context_tokens: 4000
+  topic_switch_threshold: 0.5
+
+# --------------------------------------------------------------------------
+# Embedding 模型
+# --------------------------------------------------------------------------
+embedding:
+  model: BAAI/bge-large-zh-v1.5
+  device: cpu                    # cpu | cuda
+  batch_size: 32
+  dimension: 1024
+
+# --------------------------------------------------------------------------
+# LLM 路由
+# --------------------------------------------------------------------------
+llm:
+  default: claude-sonnet-5
+  lightweight: claude-haiku-4-5
+  local: null                    # 本地模型路径（可选）
+  api_key_env: LLM_API_KEY
+  api_base_url: null
+  temperatures:
+    concept: 0.3
+    procedure: 0.0
+    compare: 0.2
+    lookup: 0.0
+
+# --------------------------------------------------------------------------
+# 联网搜索兜底
+# --------------------------------------------------------------------------
+web_search:
+  enabled: true
+  provider: duckduckgo           # duckduckgo | serpapi
+  timeout_seconds: 10
+
+# --------------------------------------------------------------------------
+# 模型下载管理
+# --------------------------------------------------------------------------
+model:
+  cache_dir: models                   # 模型下载目录（相对于 PROJECT_ROOT）
+  default_models:
+    embedding: BAAI/bge-large-zh-v1.5
+    rerank: BAAI/bge-reranker-v2-m3
+    llm: Qwen/Qwen3-0.6B      # 本地轻量 LLM（预留）
+  hf_token_env: HUGGINGFACE_TOKEN     # HuggingFace Token 环境变量名
+  hf_endpoint: https://hf-mirror.com    # 国内镜像: https://hf-mirror.com；设为 null 使用官方源
+  max_retries: 3                      # 网络错误重试次数
+
+# --------------------------------------------------------------------------
+# 向量数据库 — 第一期使用 FAISS，后续可迁移至 Milvus
+# --------------------------------------------------------------------------
+faiss:
+  index_type: IVF_FLAT             # IndexFlatIP | IVF_FLAT | IVFPQ | HNSW
+  metric_type: COSINE              # COSINE | L2 | IP
+  nlist: 100                       # IVF 聚类中心数
+  nprobe: 10                       # 检索时搜索的聚类数
+  dimension: 1024                   # 与 embedding.dimension 保持一致
+  index_dir: data/faiss_indexes    # 索引持久化目录
+
+# --------------------------------------------------------------------------
+# 兜底策略
+# --------------------------------------------------------------------------
+fallback:
+  max_retrieval_rounds: 2
+  no_answer_message: "抱歉，当前知识库中未找到相关信息，建议补充相关文档或联系管理员。"
+
+# --------------------------------------------------------------------------
+# 别名映射 — file_path 使用代码默认值 PROJECT_ROOT/config/aliases.yaml
+# --------------------------------------------------------------------------
+aliases:
+  auto_reload: true
+
+# --------------------------------------------------------------------------
+# 日志 — log_dir 使用代码默认值 PROJECT_ROOT/logs
+# --------------------------------------------------------------------------
+log:
+  log_level: INFO
+  log_file: rag_service.log
+  backup_count: 7
+  max_bytes: 10485760            # 10MB
+  enable_colors: false
+  quiet: false
+  replace_main_with_filename: true

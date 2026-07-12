@@ -1,0 +1,49 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+.eggs/
+
+# ===== 虚拟环境 =====
+venv/
+.venv/
+env/
+.env
+
+# ===== 敏感配置 =====
+config/.env
+environments/.secret_key
+*.secret_key
+*.key
+*.pem
+
+# ===== 模型文件 =====
+models/
+
+# ===== 运行时数据 =====
+data/
+logs/
+*.db
+*.sqlite3
+
+# ===== IDE / 编辑器 =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+
+# ===== 测试 & 覆盖率 =====
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.pytest_cache/
