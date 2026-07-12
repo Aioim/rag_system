@@ -44,7 +44,7 @@
 
 | 组件 | 职责 |
 |------|------|
-| `Stage` | 协议/基类，定义 `async def run(self, ctx: PipelineContext) -> PipelineContext` |
+| `Stage` | 协议/基类，`name: str`、`fatal: bool`、`async def run(self, ctx: PipelineContext) -> PipelineContext` |
 | `IngestionPipeline` | 编排器，持有 Stage 列表，依次调用，记录耗时和状态 |
 | `PipelineContext` | 贯穿全链路的数据容器，携带 document、chunks、errors、metadata |
 
@@ -179,6 +179,7 @@ chunking:
 ### 设计决策
 
 - 三种 splitter 同接口：`splitter(text: str) -> list[Chunk]`，ChunkerStage 不关心具体策略
+- SemanticChunker 需要 embedding 模型计算句子相似度，模型实例由工厂函数传入，与 EmbedderStage **共享同一实例**（避免 BGE-large ~1.3GB 双倍内存）
 - ChunkerStage 根据 `settings.chunking.strategy` 选择 splitter 实例
 - Token 计数用中文字数估算（1 字 ≈ 1 token），一期不引入 tokenizer
 - 重叠按 token 数计算而非字符数
@@ -228,7 +229,7 @@ ctx.chunks (无 embedding)
 
 ### 设计决策
 
-- 不在此 Stage 加载模型——通过 `models.get_path("embedding")` 获取路径，模型加载/缓存由 model manager 负责
+- 不在此 Stage 加载模型——通过 `models.get_path("embedding")` 获取路径，模型加载/缓存由 model manager 负责。实际模型实例由工厂函数传入，与 ChunkerStage（SemanticChunker）**共享同一实例**
 - 批量推理：chunks 按 batch_size 分批
 - 幂等：已带 embedding 的 chunk 自动跳过
 - 空 chunks 时跳过，记录 info 日志
@@ -331,7 +332,7 @@ class PipelineContext:
 class Document:
     doc_id: str
     source_path: Path
-    file_type: str                      # pdf / docx / md
+    file_type: str                      # 源文件扩展名，第一期启用: pdf / docx / md
     title: str = ""
     raw_text: str = ""
     collection: str = "default"
@@ -382,11 +383,14 @@ class IngestionPipeline:
 ```python
 # ingestion/__init__.py
 def create_default_pipeline() -> IngestionPipeline:
+    # 加载 embedding 模型一次，Chunker（SemanticChunker）和 Embedder 共享
+    embedding_model = models.load("embedding")
+
     return IngestionPipeline(
         stages=[
             ParserStage(),
-            ChunkerStage(),         # 根据 settings.chunking.strategy 选择 splitter
-            EmbedderStage(),
+            ChunkerStage(embedding_model=embedding_model),    # 根据 settings.chunking.strategy 选择 splitter
+            EmbedderStage(embedding_model=embedding_model),   # 共享同一模型实例
         ],
         index_writer=FAISSIndexWriter(),
     )
