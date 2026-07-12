@@ -132,3 +132,32 @@ log:
   enable_colors: false
   quiet: false
   replace_main_with_filename: true
+
+# --------------------------------------------------------------------------
+# 模型微调 & 蒸馏
+# --------------------------------------------------------------------------
+finetune:
+  output_dir: models/finetuned       # LoRA 适配器输出目录（相对 PROJECT_ROOT）
+  device: auto                       # auto | cuda | cpu
+  data_dir: data/finetune            # 训练数据默认目录
+
+  training:
+    epochs: 3
+    learning_rate: 2.0e-4
+    batch_size: 8
+    warmup_ratio: 0.1
+    max_seq_length: 512
+    gradient_accumulation_steps: 4
+    eval_steps: 100
+    save_steps: 500
+    logging_steps: 50
+
+  lora:
+    r: 8
+    lora_alpha: 32
+    lora_dropout: 0.1
+    target_modules: null            # null=各模型类型自动推断
+
+  distillation:
+    temperature: 2.0
+    alpha: 0.5                      # 硬标签权重（0=纯蒸馏，1=纯SFT）

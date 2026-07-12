@@ -89,8 +89,67 @@ class Embedder:
         # self._model = SentenceTransformer(str(path))
 ```
 
-## 依赖
+## 模型微调 & 蒸馏
+
+### 快速开始
+
+```python
+from model import models
+
+# Embedding 微调
+result = models.finetune("embedding", data_path="data/finetune/triplets.jsonl")
+
+# Reranker 微调
+result = models.finetune("reranker", data_path="data/finetune/rerank_data.jsonl")
+
+# LLM SFT 微调
+result = models.finetune("llm", data_path="data/finetune/instructions.jsonl")
+
+# LLM 蒸馏（云端大模型 → 本地小模型）
+result = models.finetune("llm", data_path="data/finetune/instructions.jsonl",
+                         teacher="claude-sonnet-5", alpha=0.3)
+```
+
+### CLI
+
+```bash
+# 微调 embedding
+python -m model.finetune embedding --data data/finetune/triplets.jsonl --name my-emb
+
+# 蒸馏 LLM
+python -m model.finetune llm --data data/finetune/instructions.jsonl \
+    --teacher claude-sonnet-5 --alpha 0.3
+
+# 管理
+python -m model.finetune list
+python -m model.finetune info --name my-emb
+python -m model.finetune remove --name my-emb
+```
+
+### 训练数据格式
+
+| 模型类型 | JSONL 字段 | 示例 |
+|---------|-----------|------|
+| embedding | query, positive, negative | `{"query": "...", "positive": "...", "negative": "..."}` |
+| reranker | query, document, label | `{"query": "...", "document": "...", "label": 1}` |
+| llm | instruction, input, output | `{"instruction": "...", "input": "...", "output": "..."}` |
+
+数据文件放在 `data/finetune/` 目录下。
+
+### 蒸馏流程
+
+1. 准备指令数据（instruction + input + output）
+2. 用 `--teacher` 指定云端大模型，自动调用 API 生成教师答案
+3. 混合教师答案和人工标注训练学生模型
+4. 输出 LoRA 适配器到 `models/finetuned/`
+
+### 配置
+
+微调参数通过 `config/defaults.yaml` 的 `finetune:` 段控制，CLI 参数可覆盖。
+
+### 依赖
 
 ```bash
 pip install huggingface_hub
+pip install rag-service[finetune]
 ```
