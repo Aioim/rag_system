@@ -143,6 +143,7 @@ Data models（Document、Chunk）先内置在 `context.py`，后续提取到 `sr
   ├── 3. 相似度低于阈值的点 → 语义边界，在此切分
   │       - 阈值策略: percentile（取所有相似度的 P 分位）
   │       - 可配置: settings.chunking.semantic_threshold_percentile (默认 0.9)
+  │       - buffer: 切分点前后各保留 semantic_buffer_size 个句子，避免在轻微语义转折处过度切分
   ├── 4. 合并：将边界间的句子拼接，控制在 chunk_size 附近
   ├── 5. 滑动窗口重叠 (overlap tokens)
   └── 6. 构建双向链表 (prev_chunk_id / next_chunk_id)
@@ -178,7 +179,7 @@ chunking:
 
 ### 设计决策
 
-- 三种 splitter 同接口：`splitter(text: str) -> list[Chunk]`，ChunkerStage 不关心具体策略
+- 三种 splitter 同接口：`splitter(text: str) -> list[Chunk]`（embedding_model 等外部依赖在构造函数注入，不在方法签名中），ChunkerStage 不关心具体策略
 - SemanticChunker 需要 embedding 模型计算句子相似度，模型实例由工厂函数传入，与 EmbedderStage **共享同一实例**（避免 BGE-large ~1.3GB 双倍内存）
 - ChunkerStage 根据 `settings.chunking.strategy` 选择 splitter 实例
 - Token 计数用中文字数估算（1 字 ≈ 1 token），一期不引入 tokenizer
@@ -265,8 +266,7 @@ ctx.chunks (有 embedding)
     ├── 3. 添加向量 + 训练（首次）/ 追加（增量）
     ├── 4. 持久化
     │        - index.faiss         → FAISS 索引二进制
-    │        - index.id_map.json    → chunk_id → FAISS id 映射
-    │        - docstore.json        → chunk_id → 元数据
+    │        - docstore.json        → chunk_id → {faiss_id, text, doc_id, ...}（与 id 映射合并为一个文件）
     └── 5. 写回 ctx.metadata.index_path
 ```
 
@@ -276,8 +276,7 @@ ctx.chunks (有 embedding)
 data/faiss_indexes/
 ├── default/
 │   ├── index.faiss
-│   ├── index.id_map.json
-│   └── docstore.json
+│   └── docstore.json      # chunk_id → {faiss_id, text, doc_id, chunk_index, ...}
 ├── tech/
 │   └── ...
 └── policy/
@@ -292,7 +291,7 @@ data/faiss_indexes/
 - Pipeline 最后一步调用 `IndexWriter.write(chunks, collection)`，由 `IngestionPipeline` 编排
 - **增量追加 vs 全量重建**：collection 不存在→创建；存在→追加。FAISS IVF 不支持真正 delete，一期跳过去重
 - 维度校验：写入前校验 embedding 维度与 `settings.faiss.dimension` 一致，不一致直接报错
-- docstore.json 存储 chunk 元数据，检索时和向量结果一起返回
+- `docstore.json` 合并 id 映射和元数据：`{chunk_id: {faiss_id: int, text: str, doc_id: str, ...}}`。FAISS 内部使用自增整数 ID，检索时通过 docstore 将 faiss_id 映射回 chunk 信息
 
 ### 依赖
 
@@ -365,10 +364,23 @@ class IngestionPipeline:
         ...
 
     async def run(self, file_path: Path, collection: str = "default") -> PipelineContext:
-        # 遍历 stages，逐个调用 stage.run(ctx)
-        # 记录每阶段耗时到 ctx.metadata
-        # fatal 错误时停止，非 fatal 记录后继续
-        # 最后调用 index_writer.write(ctx.chunks, collection)
+        # 1. 构造 Document — doc_id 用 uuid4，title 取文件名，file_type 取扩展名
+        doc = Document(
+            doc_id=str(uuid.uuid4()),
+            source_path=file_path,
+            file_type=file_path.suffix.lstrip(".").lower(),
+            title=file_path.stem,
+            collection=collection,
+        )
+        ctx = PipelineContext(document=doc, status="running")
+
+        # 2. 遍历 stages，逐个调用 stage.run(ctx)
+        #    - 记录每阶段耗时到 ctx.metadata
+        #    - fatal 错误时停止，非 fatal 记录后继续
+        #    - 更新 ctx.current_stage
+
+        # 3. 最后调用 index_writer.write(ctx.chunks, collection)
+        # 4. 设置 ctx.status = "done" 并返回
 ```
 
 ### 错误分级
