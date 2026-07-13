@@ -70,11 +70,13 @@ class IntentClassifier:
             intent = Intent.CONCEPT
 
         raw_clear = data.get("is_clear", True)
-        # 防御：bool("false") 在 Python 中为 True，显式处理字符串 "false"/"true"
+        # 防御：bool("false") 在 Python 中为 True，显式处理各类型
         if isinstance(raw_clear, str):
             is_clear = raw_clear.lower() != "false"
         elif isinstance(raw_clear, bool):
             is_clear = raw_clear
+        elif isinstance(raw_clear, int):
+            is_clear = bool(raw_clear)  # 0 → False, 1 → True
         else:
             is_clear = True
         clarification_question = data.get("clarification_question") if not is_clear else None

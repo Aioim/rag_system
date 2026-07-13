@@ -29,7 +29,7 @@ class QueryRewriter:
 
         all_queries = [query]
         for r in results:
-            if isinstance(r, Exception):
+            if isinstance(r, BaseException):
                 continue
             for q in r:
                 if q and q not in all_queries:

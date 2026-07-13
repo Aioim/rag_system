@@ -22,7 +22,8 @@ def get_query_layer(llm, session_manager) -> QueryUnderstandingLayer:
 def reset_query_layer() -> None:
     """重置全局单例（测试用）"""
     global _query_layer
-    _query_layer = None
+    with _lock:
+        _query_layer = None
 
 
 __all__ = [
