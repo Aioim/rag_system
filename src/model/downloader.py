@@ -77,23 +77,28 @@ class ModelDownloader:
                     )
                     time.sleep(wait)
                 else:
+                    # 清理不完整下载（HF 可能下了 config 但无权重文件）
+                    if local_dir.is_dir() and not self.is_downloaded(model_id):
+                        shutil.rmtree(local_dir, ignore_errors=True)
                     raise RuntimeError(
                         f"模型下载失败（已重试 {self._max_retries} 次）: {model_id}"
                     ) from e
 
     def is_downloaded(self, model_id: str) -> bool:
-        """检查模型是否已下载（目录存在且有模型权重文件）"""
+        """检查模型是否已下载（目录存在且包含模型权重文件）"""
         model_id = _validate_model_id(model_id)
         local_dir = self._cache_dir / model_id
         if not local_dir.is_dir():
             return False
-        for f in local_dir.iterdir():
-            if f.is_file() and not f.name.startswith("."):
+        for f in local_dir.rglob("*"):
+            if f.is_file() and f.suffix in (".safetensors", ".bin", ".onnx", ".msgpack", ".h5", ".ckpt", ".pt"):
                 return True
         return False
 
+    _WEIGHT_EXTS = {".safetensors", ".bin", ".onnx", ".msgpack", ".h5", ".ckpt", ".pt"}
+
     def list_downloaded(self) -> Dict[str, Path]:
-        """列出所有已下载模型"""
+        """列出所有已下载模型（只返回含权重文件的完整模型）"""
         result: Dict[str, Path] = {}
         if not self._cache_dir.is_dir():
             return result
@@ -104,9 +109,11 @@ class ModelDownloader:
                     continue
                 if entry.is_dir():
                     current = f"{prefix}{entry.name}" if prefix else entry.name
-                    files = [f for f in entry.iterdir()
-                             if f.is_file() and not f.name.startswith(".")]
-                    if files:
+                    has_weights = any(
+                        f.suffix in self._WEIGHT_EXTS
+                        for f in entry.rglob("*") if f.is_file()
+                    )
+                    if has_weights:
                         result[current] = entry
                     else:
                         _scan(entry, f"{current}/")
@@ -153,10 +160,18 @@ def download_from_modelscope(model_id: str, cache_dir: str | Path = "models") ->
     cache_dir = Path(cache_dir)
     target_dir = cache_dir / model_id_safe
 
-    if target_dir.is_dir() and any(
-        f.is_file() and not f.name.startswith(".") for f in target_dir.iterdir()
-    ):
-        logger.info(f"模型已存在，跳过下载: {model_id_safe} → {target_dir}")
+    # 检查是否已有完整模型（含权重文件）
+    weight_exts = {".safetensors", ".bin", ".onnx", ".msgpack", ".h5", ".ckpt", ".pt"}
+    has_weights = (
+        target_dir.is_dir()
+        and any(
+            f.suffix in weight_exts
+            for f in target_dir.rglob("*")
+            if f.is_file()
+        )
+    )
+    if has_weights:
+        logger.info(f"模型已存在（含权重），跳过下载: {model_id_safe} → {target_dir}")
         return target_dir
 
     logger.info(f"[ModelScope] 开始下载: {model_id_safe} → {target_dir}")
