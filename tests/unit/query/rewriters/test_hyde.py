@@ -34,8 +34,6 @@ class TestHyDERewriter:
 
     @pytest.mark.asyncio
     async def test_rewrite_on_llm_error(self):
-        llm = MockLLM(response=RuntimeError("timeout"))
-        llm.response = None  # trigger exception
 
         class FailingLLM:
             async def generate(self, prompt, **kwargs):
