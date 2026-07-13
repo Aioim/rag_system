@@ -26,6 +26,7 @@ class QueryUnderstandingLayer:
 
         # 1. 别名映射
         query = resolve_aliases_in_text(query)
+        ctx.query = query
 
         # 2. 意图分类 + 清晰度判断
         result = await self.intent_classifier.classify(query)

@@ -1,16 +1,21 @@
 """查询理解层 — 意图分类 / 清晰度判断 / 上下文融合 / 查询改写"""
+import threading
+
 from query.layer import QueryUnderstandingLayer
 from query.intent_classifier import IntentResult
 
 # 全局单例
 _query_layer: QueryUnderstandingLayer | None = None
+_lock = threading.Lock()
 
 
 def get_query_layer(llm, session_manager) -> QueryUnderstandingLayer:
     """获取查询理解层全局单例"""
     global _query_layer
     if _query_layer is None:
-        _query_layer = QueryUnderstandingLayer(llm, session_manager)
+        with _lock:
+            if _query_layer is None:
+                _query_layer = QueryUnderstandingLayer(llm, session_manager)
     return _query_layer
 
 

@@ -69,7 +69,14 @@ class IntentClassifier:
         except ValueError:
             intent = Intent.CONCEPT
 
-        is_clear = bool(data.get("is_clear", True))
+        raw_clear = data.get("is_clear", True)
+        # 防御：bool("false") 在 Python 中为 True，显式处理字符串 "false"/"true"
+        if isinstance(raw_clear, str):
+            is_clear = raw_clear.lower() != "false"
+        elif isinstance(raw_clear, bool):
+            is_clear = raw_clear
+        else:
+            is_clear = True
         clarification_question = data.get("clarification_question") if not is_clear else None
 
         return IntentResult(
