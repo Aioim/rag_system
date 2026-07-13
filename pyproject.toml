@@ -79,6 +79,7 @@ all = [
 [project.scripts]
 rag-download = "model.downloader:main"
 rag-finetune = "model.finetune.cli:main"
+rag-ingest = "ingestion.__main__:main"
 
 # ---- setuptools 包发现 ----------------------------------------------
 [tool.setuptools.packages.find]
