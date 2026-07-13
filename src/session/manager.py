@@ -21,6 +21,7 @@ class SessionManager:
 
     def __init__(self, store: Optional[SessionStore] = None):
         self.store = store or SessionStore()
+        self._last_cleanup = 0.0
 
     # ---- 公共 API ----
 
@@ -133,23 +134,21 @@ class SessionManager:
         if total <= max_tokens:
             return
 
-        # 简单策略：保留最近 50% token 预算的消息，其余移除
+        # 从末尾向前累计，找到保留 50% token 预算的切分点
         keep_tokens = 0
-        keep_from = len(session.messages)
+        keep_from = 0  # 0 表示从开头保留（不切）
         for i, msg in enumerate(reversed(session.messages)):
             keep_tokens += len(msg.content)
             if keep_tokens >= max_tokens * 0.5:
                 keep_from = len(session.messages) - i - 1
                 break
 
-        if keep_from > 0 and not session.context_summary:
-            session.context_summary = (
-                f"（之前 {keep_from} 条消息因长度限制已省略）"
-            )
         if keep_from > 0:
+            if not session.context_summary:
+                session.context_summary = (
+                    f"（之前 {keep_from} 条消息因长度限制已省略）"
+                )
             session.messages = session.messages[keep_from:]
-
-    _last_cleanup = 0.0
 
     def _cleanup_if_needed(self) -> None:
         """每 10 分钟最多触发一次 TTL 清理"""

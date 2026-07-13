@@ -3,7 +3,6 @@
 import json
 import sqlite3
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -27,7 +26,7 @@ class SessionStore:
 
     @property
     def conn(self) -> sqlite3.Connection:
-        """惰性连接（线程安全由锁保证）"""
+        """惰性连接（调用方已持有 _lock）"""
         if self._conn is None:
             self._conn = sqlite3.connect(self._db_path)
             self._conn.row_factory = sqlite3.Row
@@ -67,14 +66,15 @@ class SessionStore:
     # ---- Session CRUD ----
 
     def create(self, session_id: str) -> Session:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         with self._lock:
             conn = self.conn
             conn.execute(
                 "INSERT INTO sessions(session_id, created_at, last_active) VALUES (?, ?, ?)",
-                (session_id, now, now),
+                (session_id, now_iso, now_iso),
             )
-        return Session(session_id=session_id)
+        return Session(session_id=session_id, created_at=now, last_active=now)
 
     def get(self, session_id: str) -> Optional[Session]:
         with self._lock:
@@ -98,7 +98,12 @@ class SessionStore:
     def get_or_create(self, session_id: str) -> Session:
         session = self.get(session_id)
         if session is None:
-            session = self.create(session_id)
+            try:
+                session = self.create(session_id)
+            except sqlite3.IntegrityError:
+                session = self.get(session_id)
+                if session is None:
+                    raise RuntimeError(f"无法创建或获取会话: {session_id}")
         return session
 
     def update(self, session: Session) -> None:
