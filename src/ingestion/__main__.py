@@ -66,19 +66,28 @@ async def run_demo():
 
         # 2. 检查模型状态
         from model import models
+        from model.downloader import download_from_modelscope
 
         print("🔍 检查 Embedding 模型...")
         status = models.status()
         if not status.get("embedding"):
             print("⚠️  Embedding 模型未下载，尝试下载...")
             try:
+                # 优先 HuggingFace / hf-mirror
                 models.download("embedding")
-                print("✅ 下载完成")
-            except Exception as e:
-                print(f"❌ 下载失败: {e}")
-                print("   请确保: 1) 设置 HUGGINGFACE_TOKEN 环境变量")
-                print("          2) 网络可访问 HuggingFace 或镜像站")
-                sys.exit(1)
+                print("✅ 下载完成 (HuggingFace)")
+            except Exception:
+                print("   HuggingFace 下载失败，尝试 ModelScope（魔塔）...")
+                try:
+                    download_from_modelscope(
+                        "BAAI/bge-large-zh-v1.5", cache_dir="models"
+                    )
+                    print("✅ 下载完成 (ModelScope)")
+                except Exception as e2:
+                    print(f"❌ 所有下载源均失败: {e2}")
+                    print("   请手动运行:")
+                    print("   python -c \"from model.downloader import download_from_modelscope; download_from_modelscope('BAAI/bge-large-zh-v1.5')\"")
+                    sys.exit(1)
 
         # 3. 创建 Pipeline
         from ingestion import create_default_pipeline

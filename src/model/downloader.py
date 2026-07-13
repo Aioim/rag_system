@@ -1,5 +1,6 @@
 """
 HuggingFace 模型下载引擎 — 进度显示 + 断点续传 + 重试 + 错误处理
+支持 HuggingFace / hf-mirror / ModelScope（魔塔）三种下载源
 """
 
 import time
@@ -25,18 +26,7 @@ def _validate_model_id(model_id: str) -> str:
 
 
 class ModelDownloader:
-    """HuggingFace 模型下载器
-
-    封装 huggingface_hub.snapshot_download，提供：
-    - 断点续传（resume_download=True，内置支持）
-    - 失败重试（指数退避：1s / 2s / 4s）
-    - 进度条（tqdm，huggingface_hub 内置）
-    - 路径穿越防护
-
-    使用示例：
-        dl = ModelDownloader(Path("models"))
-        path = dl.download("BAAI/bge-large-zh-v1.5")
-    """
+    """HuggingFace 模型下载器"""
 
     def __init__(self, cache_dir: Path, max_retries: int = 3,
                  hf_token: Optional[str] = None,
@@ -51,15 +41,10 @@ class ModelDownloader:
         return self._cache_dir
 
     def model_dir(self, model_id: str) -> Path:
-        """返回模型的本地目录路径（安全验证后拼接）"""
         return self._cache_dir / _validate_model_id(model_id)
 
     def download(self, model_id: str, force: bool = False) -> Path:
-        """下载模型，返回本地路径。
-
-        如果模型已存在则跳过（除非 force=True）。
-        使用 snapshot_download 实现断点续传。
-        """
+        """通过 HuggingFace / hf-mirror 下载模型"""
         model_id = _validate_model_id(model_id)
         local_dir = self._cache_dir / model_id
 
@@ -97,7 +82,7 @@ class ModelDownloader:
                     ) from e
 
     def is_downloaded(self, model_id: str) -> bool:
-        """检查模型是否已下载（目录存在且有非隐藏的模型文件）"""
+        """检查模型是否已下载（目录存在且有模型权重文件）"""
         model_id = _validate_model_id(model_id)
         local_dir = self._cache_dir / model_id
         if not local_dir.is_dir():
@@ -108,10 +93,7 @@ class ModelDownloader:
         return False
 
     def list_downloaded(self) -> Dict[str, Path]:
-        """列出所有已下载模型，返回 {model_id: local_path}
-
-        递归扫描缓存目录以正确处理层级化的 model_id（如 BAAI/bge-large-zh-v1.5）。
-        """
+        """列出所有已下载模型"""
         result: Dict[str, Path] = {}
         if not self._cache_dir.is_dir():
             return result
@@ -122,20 +104,17 @@ class ModelDownloader:
                     continue
                 if entry.is_dir():
                     current = f"{prefix}{entry.name}" if prefix else entry.name
-                    # 检查是否包含模型文件（非目录的文件）
                     files = [f for f in entry.iterdir()
                              if f.is_file() and not f.name.startswith(".")]
                     if files:
                         result[current] = entry
                     else:
-                        # 无模型文件则继续向下扫描
                         _scan(entry, f"{current}/")
 
         _scan(self._cache_dir, "")
         return result
 
     def remove(self, model_id: str) -> bool:
-        """删除已下载的模型目录"""
         model_id = _validate_model_id(model_id)
         local_dir = self._cache_dir / model_id
         if local_dir.is_dir():
@@ -145,6 +124,89 @@ class ModelDownloader:
         return False
 
 
+# ============================================================================
+# ModelScope（魔塔）下载支持 — 国内直连，免 token
+# ============================================================================
+
+_MODELSCOPE_AVAILABLE = False
+try:
+    from modelscope import snapshot_download as _ms_snapshot_download
+
+    _MODELSCOPE_AVAILABLE = True
+except ImportError:
+    pass
+
+
+def download_from_modelscope(model_id: str, cache_dir: str | Path = "models") -> Path:
+    """通过 ModelScope（魔塔）下载模型 — 国内直连，无需 token
+
+    使用示例：
+        path = download_from_modelscope("BAAI/bge-large-zh-v1.5")
+        path = download_from_modelscope("BAAI/bge-reranker-v2-m3", cache_dir="models")
+    """
+    if not _MODELSCOPE_AVAILABLE:
+        raise RuntimeError(
+            "modelscope 未安装。请运行: pip install modelscope"
+        )
+
+    model_id_safe = _validate_model_id(model_id)
+    cache_dir = Path(cache_dir)
+    target_dir = cache_dir / model_id_safe
+
+    if target_dir.is_dir() and any(
+        f.is_file() and not f.name.startswith(".") for f in target_dir.iterdir()
+    ):
+        logger.info(f"模型已存在，跳过下载: {model_id_safe} → {target_dir}")
+        return target_dir
+
+    logger.info(f"[ModelScope] 开始下载: {model_id_safe} → {target_dir}")
+
+    try:
+        tmp_dir = _ms_snapshot_download(
+            model_id_safe,
+            cache_dir=str(cache_dir / ".modelscope"),
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"ModelScope 下载失败: {model_id_safe}\n"
+            f"  错误: {e}\n"
+            f"  提示: 检查 model_id 是否正确，或访问 https://modelscope.cn 确认模型存在"
+        ) from e
+
+    # 从 ModelScope 缓存目录复制到项目标准路径
+    tmp_path = Path(tmp_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for f in tmp_path.iterdir():
+        dst = target_dir / f.name
+        if not dst.exists():
+            if f.is_dir():
+                shutil.copytree(str(f), str(dst))
+            else:
+                shutil.copy2(str(f), str(dst))
+
+    # 验证权重文件
+    weight_files = (
+        list(target_dir.rglob("*.safetensors"))
+        + list(target_dir.rglob("pytorch_model.bin"))
+        + list(target_dir.rglob("*.onnx"))
+    )
+    if not weight_files:
+        logger.warning(
+            "⚠️  未找到模型权重文件（.safetensors / pytorch_model.bin / .onnx），"
+            "模型可能不完整"
+        )
+
+    logger.info(f"[ModelScope] 下载完成: {target_dir}")
+    return target_dir
+
+
 if __name__ == "__main__":
-    from model import models
-    models.download_all()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "modelscope":
+        # python -m model.downloader modelscope BAAI/bge-large-zh-v1.5
+        model = sys.argv[2] if len(sys.argv) > 2 else "BAAI/bge-large-zh-v1.5"
+        download_from_modelscope(model)
+    else:
+        from model import models
+        models.download_all()
