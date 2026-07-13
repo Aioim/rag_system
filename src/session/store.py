@@ -134,18 +134,19 @@ class SessionStore:
     # ---- Message CRUD ----
 
     def add_message(self, session_id: str, role: str, content: str) -> Message:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         with self._lock:
             conn = self.conn
             conn.execute(
                 "INSERT INTO messages(session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-                (session_id, role, content, now),
+                (session_id, role, content, now_iso),
             )
             conn.execute(
                 "UPDATE sessions SET last_active = ? WHERE session_id = ?",
-                (now, session_id),
+                (now_iso, session_id),
             )
-        return Message(role=role, content=content, timestamp=datetime.fromisoformat(now))
+        return Message(role=role, content=content, timestamp=now)
 
     def get_messages(self, session_id: str, limit: Optional[int] = None) -> list[Message]:
         with self._lock:

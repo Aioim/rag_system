@@ -67,10 +67,10 @@ class SessionManager:
         msg = self.store.add_message(session_id, role, content)
         session.messages.append(msg)
 
-        # 上下文压缩
+        # 上下文压缩（仅修改内存，get_context 会重新加载完整历史后再截断）
         self._compress_if_needed(session)
 
-        # 持久化
+        # 持久化会话元数据
         self.store.update(session)
         return msg
 
