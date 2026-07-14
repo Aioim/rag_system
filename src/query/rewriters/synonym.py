@@ -31,7 +31,8 @@ class SynonymRewriter(BaseRewriter):
 # 自测：展示同义改写 Prompt 构建 + 响应解析
 # ============================================================================
 if __name__ == "__main__":
-    r = SynonymRewriter(None)
+    from types import SimpleNamespace
+    r = SynonymRewriter(SimpleNamespace())
     print("=" * 60)
     print("SynonymRewriter 自测 — Prompt 预览 + 响应解析")
     print("=" * 60)

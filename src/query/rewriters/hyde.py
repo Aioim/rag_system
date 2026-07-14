@@ -24,7 +24,8 @@ class HyDERewriter(BaseRewriter):
 # 自测：展示 HyDE Prompt 构建
 # ============================================================================
 if __name__ == "__main__":
-    r = HyDERewriter(None)
+    from types import SimpleNamespace
+    r = HyDERewriter(SimpleNamespace())
     print("=" * 60)
     print("HyDERewriter 自测 — Prompt 预览")
     print("=" * 60)

@@ -50,11 +50,12 @@ class QueryRewriter:
 # ============================================================================
 if __name__ == "__main__":
     import asyncio
+    from types import SimpleNamespace
 
     class _MockRewriter(BaseRewriter):
         """返回固定结果的改写器"""
         def __init__(self, results):
-            super().__init__(None)
+            super().__init__(SimpleNamespace())
             self._results = results
 
         async def rewrite(self, query: str) -> list[str]:

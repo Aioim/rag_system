@@ -17,6 +17,10 @@ class BaseRewriter:
 
     async def rewrite(self, query: str) -> list[str]:
         """模板方法：构建 prompt → 调用 LLM.ainvoke → 解析响应"""
+        if self._llm is None:
+            raise ValueError(
+                f"{type(self).__name__} 未收到 LLM 实例，请通过构造函数传入"
+            )
         prompt = self._build_prompt(query)
         try:
             kwargs = {}
