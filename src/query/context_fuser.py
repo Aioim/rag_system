@@ -10,7 +10,7 @@ class ContextFuser:
     SessionManager 用于获取对话历史。
     """
 
-    def __init__(self, llm, session_manager: SessionManager, temperature: float | None = None):
+    def __init__(self, llm, session_manager: SessionManager, temperature: float = 0):
         self._llm = llm
         self._session_manager = session_manager
         self._temperature = temperature
@@ -25,10 +25,7 @@ class ContextFuser:
         history = self._format_history(session.messages)
         prompt = self._build_prompt(history, query)
         try:
-            kwargs = {}
-            if self._temperature is not None:
-                kwargs["temperature"] = self._temperature
-            response = (await self._llm.ainvoke(prompt, **kwargs)).content
+            response = (await self._llm.ainvoke(prompt, temperature=self._temperature)).content
             result = response.strip()
             return result if result else query
         except Exception:
