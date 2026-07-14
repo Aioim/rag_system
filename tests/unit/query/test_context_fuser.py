@@ -40,7 +40,8 @@ class TestContextFuser:
         session_manager.add_message("s1", "user", "年假怎么申请？")
         session_manager.add_message("s1", "assistant", "年假申请需要登录OA系统...")
 
-        result = await fuser.fuse("需要什么材料？", "s1")
+        session = session_manager.get("s1")
+        result = await fuser.fuse("需要什么材料？", session)
         assert result == "申请年假需要什么材料？"
 
     @pytest.mark.asyncio
@@ -50,7 +51,8 @@ class TestContextFuser:
         fuser = ContextFuser(llm, session_manager)
 
         session_manager.get_or_create("s1")
-        result = await fuser.fuse("五险一金缴纳比例是多少？", "s1")
+        session = session_manager.get("s1")
+        result = await fuser.fuse("五险一金缴纳比例是多少？", session)
         assert result == "五险一金缴纳比例是多少？"
 
     @pytest.mark.asyncio
@@ -58,7 +60,7 @@ class TestContextFuser:
         """会话不存在时返回原始 query"""
         llm = MockLLM()
         fuser = ContextFuser(llm, session_manager)
-        result = await fuser.fuse("任意问题", "不存在的会话ID")
+        result = await fuser.fuse("任意问题", None)
         assert result == "任意问题"
 
     @pytest.mark.asyncio
@@ -71,7 +73,8 @@ class TestContextFuser:
 
         fuser = ContextFuser(FailingLLM(), session_manager)
         session_manager.get_or_create("s1")
-        result = await fuser.fuse("需要什么材料？", "s1")
+        session = session_manager.get("s1")
+        result = await fuser.fuse("需要什么材料？", session)
         assert result == "需要什么材料？"
 
     @pytest.mark.asyncio
@@ -84,7 +87,8 @@ class TestContextFuser:
         session_manager.add_message("s2", "user", "VPN怎么连接？")
         session_manager.add_message("s2", "assistant", "请下载VPN客户端...")
 
-        await fuser.fuse("它的密码怎么改？", "s2")
+        session = session_manager.get("s2")
+        await fuser.fuse("它的密码怎么改？", session)
         prompt = llm.calls[0][0]
         assert "VPN怎么连接" in prompt
         assert "它的密码怎么改" in prompt

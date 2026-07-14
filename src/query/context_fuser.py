@@ -16,9 +16,7 @@ class ContextFuser:
         self._temperature = temperature
         self._max_history_msgs = settings.session.max_history_rounds * 2
 
-    async def fuse(self, query: str, session_id: str, session=None) -> str:
-        if session is None:
-            session = self._session_manager.get(session_id)
+    async def fuse(self, query: str, session) -> str:
         if session is None or not session.messages:
             return query
 
@@ -110,11 +108,15 @@ if __name__ == "__main__":
         print("=" * 60)
 
         # 无 session
-        result = await fuser.fuse("五险一金缴纳比例？", "nonexistent")
+        result = await fuser.fuse("五险一金缴纳比例？", None)
         print(f"  无 session: '{result}'")
 
         # 有 session，指代消解
-        result = await fuser.fuse("那个需要什么材料？", "s1")
+        session = _MockSession([
+            _MockMsg("user", "年假怎么申请？"),
+            _MockMsg("assistant", "年假需要提前在OA系统提交申请..."),
+        ])
+        result = await fuser.fuse("那个需要什么材料？", session)
         print(f"  有 session (指代消解): '{result}'")
 
     asyncio.run(main())

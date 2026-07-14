@@ -43,7 +43,7 @@ class QueryUnderstandingLayer:
         # 3. 多轮上下文融合
         if session_id:
             session = self._session_manager.get(session_id)
-            query = await self.context_fuser.fuse(query, session_id, session)
+            query = await self.context_fuser.fuse(query, session)
             ctx.query = query
             ctx.session = session
 
