@@ -93,7 +93,21 @@ class IntentClassifier:
 
     @staticmethod
     def _extract_json(raw: str) -> str | None:
-        """用括号计数提取最外层 JSON 对象，追踪字符串边界避免误截断"""
+        """从 LLM 响应中提取最外层 JSON 对象。
+
+        优先尝试直接解析整个响应（快速路径），
+        失败后降级到括号计数提取。
+        """
+        stripped = raw.strip()
+        # 快速路径：整个响应就是合法 JSON
+        if stripped.startswith("{"):
+            try:
+                json.loads(stripped)
+                return stripped
+            except json.JSONDecodeError:
+                pass
+
+        # 慢速路径：括号计数提取最外层 JSON
         start = raw.find("{")
         if start == -1:
             return None
