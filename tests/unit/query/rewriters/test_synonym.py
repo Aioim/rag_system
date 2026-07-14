@@ -1,5 +1,6 @@
 """SynonymRewriter 测试"""
 import pytest
+from types import SimpleNamespace
 from query.rewriters.synonym import SynonymRewriter
 
 
@@ -8,9 +9,9 @@ class MockLLM:
         self.response = response
         self.calls = []
 
-    async def generate(self, prompt, **kwargs):
+    async def ainvoke(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
-        return self.response
+        return SimpleNamespace(content=self.response)
 
 
 class TestSynonymRewriter:

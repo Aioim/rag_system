@@ -49,18 +49,19 @@ rag0709/
 │   ├── aliases.yaml            # 术语别名映射
 │   └── prompts/                # 按意图分类的 Prompt 模板
 ├── src/
-│   ├── config/                 # 配置加载模块
-│   ├── security/               # 敏感信息管理（Fernet 加密）
-│   ├── logger/                 # 安全日志系统
-│   ├── model/                  # 模型下载与管理
-│   ├── api/                    # [待实现] FastAPI 路由 & 中间件
-│   ├── core/                   # [待实现] RAG Pipeline 编排
-│   ├── query/                  # [待实现] 查询理解层
-│   ├── retrieval/              # [待实现] 混合检索 + Rerank
-│   ├── generation/             # [待实现] Prompt 组装 + LLM 生成
-│   ├── session/                # [待实现] SQLite 会话管理
-│   ├── ingestion/              # [待实现] 离线文档处理
-│   └── fallback/               # [待实现] 三级兜底
+│   ├── config/                 # ✅ 配置加载模块
+│   ├── security/               # ✅ 敏感信息管理（Fernet 加密）
+│   ├── logger/                 # ✅ 安全日志系统
+│   ├── model/                  # ✅ 模型下载与管理
+│   ├── models/                 # ✅ 共享数据模型（PipelineContext/Chunk/Session 等）
+│   ├── session/                # ✅ SQLite 会话管理
+│   ├── query/                  # ✅ 查询理解层（意图分类/上下文融合/查询改写）
+│   ├── api/                    # ⬜ FastAPI 路由 & 中间件
+│   ├── core/                   # ⬜ RAG Pipeline 编排
+│   ├── retrieval/              # ⬜ 混合检索 + Rerank
+│   ├── generation/             # ⬜ Prompt 组装 + LLM 生成
+│   ├── ingestion/              # ⬜ 离线文档处理
+│   └── fallback/               # ⬜ 三级兜底
 ├── models/                     # 模型文件（BGE 系列）
 ├── data/                       # 运行时数据（SQLite 等）
 ├── logs/                       # 日志文件
@@ -79,6 +80,82 @@ rag0709/
 ```
 
 在线 Pipeline（实时问答）与离线 Pipeline（文档处理）分离，离线走 ARQ 异步队列。
+
+## 模块依赖关系
+
+### 依赖层次图
+
+上层依赖下层，同层模块通过 `PipelineContext` 传递数据。
+
+```
+                       ┌──────────┐
+                       │    api   │  FastAPI 路由 + 中间件
+                       └────┬─────┘
+                            │
+                       ┌────┴─────┐
+                       │   core   │  Pipeline 编排（串联所有在线模块）
+                       └────┬─────┘
+                            │
+       ┌────────────────────┼────────────────────┐
+       │                    │                    │
+┌──────┴──────┐    ┌───────┴───────┐    ┌──────┴──────┐
+│   session   │    │    query      │    │  fallback   │
+│   会话管理   │◄───│  查询理解层    │    │  兜底处理    │
+└─────────────┘    └───────┬───────┘    └──────┬──────┘
+                           │                    ▲
+                    ┌──────┴──────┐             │
+                    │  retrieval  │─────────────┘
+                    │   检索层     │  评估不足时触发
+                    └──────┬──────┘
+                           │
+                    ┌──────┴──────┐
+                    │ generation  │
+                    │   生成层     │
+                    └─────────────┘
+
+     ┌──────────────────────────────────────────────┐
+     │  models  (PipelineContext / Chunk / Session)  │  ← 所有模块共享
+     │  config  (YAML 配置 + 别名 + Prompt 模板)      │
+     │  logger + security  (日志 + 脱敏 + 加密)       │
+     └──────────────────────────────────────────────┘
+```
+
+### Pipeline 数据流
+
+每个阶段消费上游填入 `PipelineContext` 的字段，并产出下游所需字段：
+
+```
+query ──► rewritten_queries, intent, session ──► retrieval
+retrieval ──► candidates, reranked, retrieval_eval ──► generation
+retrieval ──► retrieval_eval (INSUFFICIENT) ──► fallback ──► generation
+generation ──► answer, sources, confidence ──► core ──► api
+```
+
+### 逐模块依赖
+
+| 模块 | 状态 | 运行时注入/import 依赖 | 消费上游数据 |
+|------|------|----------------------|-------------|
+| **models** | ✅ | 无 | 无 — 纯数据结构 |
+| **config** | ✅ | security（解密敏感配置） | 无 |
+| **session** | ✅ | config, models.Session | 无 — 由 query/core 驱动写入 |
+| **query** | ✅ | config.aliases, session.SessionManager, LLM | Pipeline 入口 |
+| **retrieval** | ⬜ | embedding/reranker 模型, Milvus/FAISS | query → `rewritten_queries`, `intent`, `collection` |
+| **generation** | ⬜ | config/prompts/, LLM | retrieval → `reranked`, query → `intent` |
+| **fallback** | ⬜ | config.web_search, 联网搜索 API | retrieval → `retrieval_eval` |
+| **core** | ⬜ | query, retrieval, generation, fallback, session | 串联所有模块，传递 PipelineContext |
+| **api** | ⬜ | core, models.api_models | HTTP Request → 路由到 core |
+| **ingestion** | ⬜ | embedding 模型, FAISS, ARQ/Celery | 离线链路，写入向量库供 retrieval 使用 |
+
+### 实现顺序约束
+
+```
+第1期 ✅ models → config → session → query         （基础 + 查询理解）
+第2期 ⬜ retrieval → generation → fallback           （检索 + 生成 + 兜底）
+第3期 ⬜ core → api                                  （编排 + 对外接口）
+第4期 ⬜ ingestion                                   （离线文档处理，可与第2/3期并行）
+```
+
+关键约束：后续模块依赖 `PipelineContext` 中由上游填充的字段，必须按数据流顺序推进。
 
 ## 配置
 

@@ -1,5 +1,6 @@
 """HyDERewriter 测试"""
 import pytest
+from types import SimpleNamespace
 from query.rewriters.hyde import HyDERewriter
 
 
@@ -8,9 +9,9 @@ class MockLLM:
         self.response = response
         self.calls = []
 
-    async def generate(self, prompt, **kwargs):
+    async def ainvoke(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
-        return self.response
+        return SimpleNamespace(content=self.response)
 
 
 class TestHyDERewriter:
@@ -36,7 +37,7 @@ class TestHyDERewriter:
     async def test_rewrite_on_llm_error(self):
 
         class FailingLLM:
-            async def generate(self, prompt, **kwargs):
+            async def ainvoke(self, prompt, **kwargs):
                 raise RuntimeError("timeout")
 
         rewriter = HyDERewriter(FailingLLM())

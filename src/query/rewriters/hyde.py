@@ -9,18 +9,6 @@ from query.rewriters.base import BaseRewriter
 class HyDERewriter(BaseRewriter):
     """生成假设答案作为检索查询"""
 
-    def __init__(self, llm):
-        self._llm = llm
-
-    async def rewrite(self, query: str) -> list[str]:
-        prompt = self._build_prompt(query)
-        try:
-            response = await self._llm.generate(prompt, temperature=0.3)
-            answer = response.strip()
-            return [answer] if answer else []
-        except Exception:
-            return []
-
     def _build_prompt(self, query: str) -> str:
         return (
             "你是一个知识库助手。请根据用户问题，生成一段100-200字的假设性答案。"
@@ -30,3 +18,15 @@ class HyDERewriter(BaseRewriter):
             "\n"
             "假设答案（100-200字）："
         )
+
+
+# ============================================================================
+# 自测：展示 HyDE Prompt 构建
+# ============================================================================
+if __name__ == "__main__":
+    r = HyDERewriter(None)
+    print("=" * 60)
+    print("HyDERewriter 自测 — Prompt 预览")
+    print("=" * 60)
+    print(r._build_prompt("什么是零拷贝技术？"))
+    print(f"\ntemperature = 0.3 (建议在构造 ChatOpenAI 时设置)")

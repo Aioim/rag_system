@@ -1,5 +1,6 @@
 """IntentClassifier 测试"""
 import pytest
+from types import SimpleNamespace
 from models.enums import Intent
 from query.intent_classifier import IntentResult, IntentClassifier
 
@@ -12,11 +13,11 @@ class MockLLM:
         self.should_fail = should_fail
         self.calls = []
 
-    async def generate(self, prompt, **kwargs):
+    async def ainvoke(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
         if self.should_fail:
             raise RuntimeError("LLM timeout")
-        return self.response
+        return SimpleNamespace(content=self.response)
 
 
 @pytest.fixture

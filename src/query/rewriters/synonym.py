@@ -8,22 +8,13 @@ from query.rewriters.base import BaseRewriter
 class SynonymRewriter(BaseRewriter):
     """生成同义查询变体"""
 
-    def __init__(self, llm):
-        self._llm = llm
-
-    async def rewrite(self, query: str) -> list[str]:
-        prompt = self._build_prompt(query)
-        try:
-            response = await self._llm.generate(prompt, temperature=0.3)
-            # 按行拆分，过滤空行和与原始查询相同的
-            variants = [
-                line.strip()
-                for line in response.strip().split("\n")
-                if line.strip() and line.strip() != query
-            ]
-            return variants
-        except Exception:
-            return []
+    def _parse_response(self, response: str) -> list[str]:
+        """按行拆分，过滤空行"""
+        return [
+            line.strip()
+            for line in response.strip().split("\n")
+            if line.strip()
+        ]
 
     def _build_prompt(self, query: str) -> str:
         return (
@@ -34,3 +25,21 @@ class SynonymRewriter(BaseRewriter):
             "\n"
             "同义表达："
         )
+
+
+# ============================================================================
+# 自测：展示同义改写 Prompt 构建 + 响应解析
+# ============================================================================
+if __name__ == "__main__":
+    r = SynonymRewriter(None)
+    print("=" * 60)
+    print("SynonymRewriter 自测 — Prompt 预览 + 响应解析")
+    print("=" * 60)
+    print("--- Prompt ---")
+    print(r._build_prompt("微服务架构的优势"))
+    print("\n--- 响应解析示例 ---")
+    mock_response = "微服务架构的优点\n微服务架构好处\n微服务有什么优势"
+    parsed = r._parse_response(mock_response)
+    for i, v in enumerate(parsed, 1):
+        print(f"  [{i}] {v}")
+    print(f"\ntemperature = 0.3 (建议在构造 ChatOpenAI 时设置)")

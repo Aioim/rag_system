@@ -67,21 +67,34 @@ rag0709/
 │   │   ├── masking.py         # 正则脱敏引擎（密码/token/手机号/身份证等）
 │   │   ├── lazy.py            # 线程安全延迟初始化 LazyLogger
 │   │   └── filters.py         # SensitiveDataFilter + SecurityAuditFilter
-│   ├── api/                   # [待实现] FastAPI 路由 + 中间件
-│   ├── core/                  # [待实现] RAG Pipeline 编排
-│   ├── query/                 # [待实现] 查询理解层（意图分类/改写/别名映射/上下文融合）
-│   ├── retrieval/             # [待实现] 混合检索 + Rerank + 检索评估
-│   ├── generation/            # [待实现] Prompt 组装 + LLM 路由 + 生成 + 事实核查
-│   ├── session/               # [待实现] SQLite 会话管理
-│   ├── ingestion/             # [待实现] 离线文档处理 Pipeline
-│   ├── fallback/              # [待实现] 三级兜底处理
-│   └── models/                # [待实现] 数据模型（Document/Chunk/Session/API）
+│   ├── models/                # ✅ 共享数据模型（PipelineContext/Chunk/Session/API）
+│   ├── session/               # ✅ SQLite 会话管理（详见 src/session/README.md）
+│   ├── query/                 # ✅ 查询理解层（意图分类/上下文融合/查询改写）
+│   │   ├── __init__.py          # 导出 + get_query_layer 单例工厂
+│   │   ├── layer.py             # QueryUnderstandingLayer — Pipeline 主编排器
+│   │   ├── intent_classifier.py # IntentClassifier — 意图分类 + 清晰度判断
+│   │   ├── context_fuser.py     # ContextFuser — 多轮指代消解 + 追问补全
+│   │   └── rewriters/           # 查询改写器（并行执行，合并去重）
+│   │       ├── __init__.py       # QueryRewriter 编排器
+│   │       ├── base.py           # BaseRewriter 基类（模板方法）
+│   │       ├── hyde.py           # HyDERewriter — 生成假设答案
+│   │       ├── keyword_rewriter.py # KeywordRewriter — 提取 BM25 关键词
+│   │       └── synonym.py        # SynonymRewriter — 生成同义变体
+│   ├── api/                   # ⬜ FastAPI 路由 + 中间件
+│   ├── core/                  # ⬜ RAG Pipeline 编排
+│   ├── retrieval/             # ⬜ 混合检索 + Rerank + 检索评估
+│   ├── generation/            # ⬜ Prompt 组装 + LLM 路由 + 生成 + 事实核查
+│   ├── ingestion/             # ⬜ 离线文档处理 Pipeline
+│   └── fallback/              # ⬜ 三级兜底处理
 └── docs/superpowers/specs/    # 设计文档
 ```
 
 ## 当前开发阶段
 
-基础模块（config / security / logger / model）已完成，核心 RAG Pipeline 待实现。设计文档参见 `docs/superpowers/specs/2026-07-09-rag-enterprise-qa-design.md`，优化策略全景参见 `RAG优化策略全景图.md`。
+第1期（基础 + 查询理解）已完成：config / security / logger / model / models / session / query。
+第2期（检索 + 生成 + 兜底）和后续阶段待实现。
+
+设计文档参见 `docs/superpowers/specs/2026-07-09-rag-enterprise-qa-design.md`，优化策略全景参见 `RAG优化策略全景图.md`。
 
 ## 开发要点
 
@@ -130,6 +143,54 @@ models.list_downloaded()          # → {model_id: local_path, ...}
 ```
 
 模型存储在 `PROJECT_ROOT/models/` 下，以 `{org}/{model_name}` 为目录结构。首次运行需在 `.env` 中设置 `HUGGINGFACE_TOKEN=hf_xxx` 以访问 BGE 系列模型。
+
+### 查询理解模块
+
+```python
+from query import get_query_layer, reset_query_layer
+
+# 初始化（首次调用时创建单例，temperature 参数控制各组件确定性）
+layer = get_query_layer(llm, session_manager)
+
+# 基础查询（无会话上下文）
+ctx = await layer.process("什么是RAG？")
+# → ctx.intent, ctx.query, ctx.rewritten_queries, ctx.needs_clarification
+
+# 多轮对话（自动指代消解 + 追问补全）
+ctx = await layer.process("需要什么材料？", session_id="s1")
+# → ctx.query = "申请年假需要什么材料？"  (自动补全)
+# → ctx.session  (自动附加)
+
+# 特定知识库
+ctx = await layer.process("配置手册", collection="tech_docs")
+
+# 测试用重置
+reset_query_layer()
+```
+
+**Pipeline 流程**：别名映射 → 意图分类+清晰度判断 → 多轮上下文融合 → 查询改写(并行)
+
+**组件温度约定**：
+
+| 组件 | temperature | 原因 |
+|------|-------------|------|
+| IntentClassifier | 0 | 意图分类需确定性 |
+| ContextFuser | 0 | 指代消解需确定性 |
+| KeywordRewriter | 0 | BM25 关键词需幂等 |
+| HyDERewriter | 0.3 | 假设答案需受控创意 |
+| SynonymRewriter | 0.3 | 同义变体需多样性 |
+
+### 会话模块
+
+```python
+from session import SessionManager
+
+sm = SessionManager()
+session = sm.get_or_create()           # 创建新会话
+session = sm.get_or_create("abc-123")  # 获取已有会话
+msg = sm.add_message("abc-123", "user", "什么是RAG？")
+ctx = sm.get_context("abc-123")        # 获取对话上下文（含摘要）
+```
 
 ### 多环境
 

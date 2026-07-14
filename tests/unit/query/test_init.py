@@ -10,8 +10,8 @@ from query.layer import QueryUnderstandingLayer
 
 
 class FakeLLM:
-    async def generate(self, prompt, **kwargs):
-        return "response"
+    async def ainvoke(self, prompt, **kwargs):
+        return type("_", (), {"content": "response"})()
 
 
 @pytest.fixture

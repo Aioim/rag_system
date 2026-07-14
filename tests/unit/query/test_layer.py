@@ -1,6 +1,7 @@
 """QueryUnderstandingLayer 测试"""
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from models.enums import Intent
@@ -19,18 +20,18 @@ class MockLLM:
         self.keyword_response = "关键词"
         self.synonym_response = "同义变体"
 
-    async def generate(self, prompt, **kwargs):
+    async def ainvoke(self, prompt, **kwargs):
         if "查询意图分类器" in prompt:
-            return self.intent_response
+            return SimpleNamespace(content=self.intent_response)
         elif "对话上下文理解" in prompt:
-            return self.fuse_response
+            return SimpleNamespace(content=self.fuse_response)
         elif "假设性答案" in prompt:
-            return self.hyde_response
+            return SimpleNamespace(content=self.hyde_response)
         elif "关键词" in prompt:
-            return self.keyword_response
+            return SimpleNamespace(content=self.keyword_response)
         elif "同义" in prompt:
-            return self.synonym_response
-        return "default"
+            return SimpleNamespace(content=self.synonym_response)
+        return SimpleNamespace(content="default")
 
 
 @pytest.fixture
@@ -112,7 +113,7 @@ class TestQueryUnderstandingLayerProcess:
         """意图分类 LLM 失败时降级不抛异常"""
 
         class FailingIntentLLM:
-            async def generate(self, prompt, **kwargs):
+            async def ainvoke(self, prompt, **kwargs):
                 raise RuntimeError("LLM error")
 
         layer = QueryUnderstandingLayer(FailingIntentLLM(), session_manager)

@@ -1,6 +1,7 @@
 """ContextFuser 测试"""
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from session.store import SessionStore
@@ -13,9 +14,9 @@ class MockLLM:
         self.response = response
         self.calls = []
 
-    async def generate(self, prompt, **kwargs):
+    async def ainvoke(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
-        return self.response
+        return SimpleNamespace(content=self.response)
 
 
 @pytest.fixture
@@ -65,7 +66,7 @@ class TestContextFuser:
         """LLM 失败时降级返回原始 query"""
 
         class FailingLLM:
-            async def generate(self, prompt, **kwargs):
+            async def ainvoke(self, prompt, **kwargs):
                 raise RuntimeError("timeout")
 
         fuser = ContextFuser(FailingLLM(), session_manager)

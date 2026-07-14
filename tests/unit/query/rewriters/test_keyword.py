@@ -1,6 +1,7 @@
 """KeywordRewriter 测试"""
 import pytest
-from query.rewriters.keyword import KeywordRewriter
+from types import SimpleNamespace
+from query.rewriters.keyword_rewriter import KeywordRewriter
 
 
 class MockLLM:
@@ -8,9 +9,9 @@ class MockLLM:
         self.response = response
         self.calls = []
 
-    async def generate(self, prompt, **kwargs):
+    async def ainvoke(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
-        return self.response
+        return SimpleNamespace(content=self.response)
 
 
 class TestKeywordRewriter:
