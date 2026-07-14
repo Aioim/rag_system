@@ -19,15 +19,21 @@ def get_query_layer(llm, session_manager) -> QueryUnderstandingLayer:
     后续调用若传入不同对象，会记录警告但仍返回已缓存的实例。
     """
     global _query_layer, _init_llm_id, _init_sm_id
+
+    # 快速路径：已初始化，无锁检查
+    if _query_layer is not None:
+        if id(llm) != _init_llm_id or id(session_manager) != _init_sm_id:
+            logger.warning(
+                "get_query_layer 已初始化，忽略不同的 llm/session_manager 参数"
+            )
+        return _query_layer
+
     with _lock:
+        # 双重检查：可能另一个线程刚完成初始化
         if _query_layer is None:
             _query_layer = QueryUnderstandingLayer(llm, session_manager)
             _init_llm_id = id(llm)
             _init_sm_id = id(session_manager)
-        elif id(llm) != _init_llm_id or id(session_manager) != _init_sm_id:
-            logger.warning(
-                "get_query_layer 已初始化，忽略不同的 llm/session_manager 参数"
-            )
         return _query_layer
 
 
