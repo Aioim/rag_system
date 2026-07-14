@@ -14,6 +14,7 @@ class ContextFuser:
         self._llm = llm
         self._session_manager = session_manager
         self._temperature = temperature
+        self._max_history_msgs = settings.session.max_history_rounds * 2
 
     async def fuse(self, query: str, session_id: str, session=None) -> str:
         if session is None:
@@ -21,9 +22,9 @@ class ContextFuser:
         if session is None or not session.messages:
             return query
 
+        history = self._format_history(session.messages)
+        prompt = self._build_prompt(history, query)
         try:
-            history = self._format_history(session.messages)
-            prompt = self._build_prompt(history, query)
             kwargs = {}
             if self._temperature is not None:
                 kwargs["temperature"] = self._temperature
@@ -35,7 +36,7 @@ class ContextFuser:
             return query
 
     def _format_history(self, messages) -> str:
-        max_msgs = settings.session.max_history_rounds * 2
+        max_msgs = self._max_history_msgs
         lines = []
         if max_msgs <= 0:
             return ""
