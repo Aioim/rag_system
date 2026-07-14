@@ -1,17 +1,7 @@
 """SynonymRewriter 测试"""
 import pytest
-from types import SimpleNamespace
 from query.rewriters.synonym import SynonymRewriter
-
-
-class MockLLM:
-    def __init__(self, response="同义表达1\n同义表达2"):
-        self.response = response
-        self.calls = []
-
-    async def ainvoke(self, prompt, **kwargs):
-        self.calls.append((prompt, kwargs))
-        return SimpleNamespace(content=self.response)
+from tests.unit.query.conftest import MockLLM
 
 
 class TestSynonymRewriter:

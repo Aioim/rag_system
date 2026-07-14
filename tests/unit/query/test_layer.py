@@ -1,19 +1,17 @@
 """QueryUnderstandingLayer 测试"""
-import tempfile
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from models.enums import Intent
-from session.store import SessionStore
-from session.manager import SessionManager
 from query.layer import QueryUnderstandingLayer
+from tests.unit.query.conftest import MockLLM
 
 
-class MockLLM:
-    """可编程的 Mock LLM — 根据 prompt 内容返回不同响应"""
+class LayerMockLLM(MockLLM):
+    """可编程 Mock LLM — 根据 prompt 内容返回不同响应"""
 
     def __init__(self):
+        super().__init__()
         self.intent_response = '{"intent": "concept", "is_clear": true, "clarification_question": null}'
         self.fuse_response = "完整的问题"
         self.hyde_response = "假设答案"
@@ -21,6 +19,7 @@ class MockLLM:
         self.synonym_response = "同义变体"
 
     async def ainvoke(self, prompt, **kwargs):
+        self.calls.append((prompt, kwargs))
         if "查询意图分类器" in prompt:
             return SimpleNamespace(content=self.intent_response)
         elif "对话上下文理解" in prompt:
@@ -34,20 +33,11 @@ class MockLLM:
         return SimpleNamespace(content="default")
 
 
-@pytest.fixture
-def session_manager():
-    db_path = Path(tempfile.mkdtemp()) / "test.db"
-    store = SessionStore(db_path=db_path)
-    mgr = SessionManager(store=store)
-    yield mgr
-    store.close()
-
-
 class TestQueryUnderstandingLayerProcess:
     @pytest.mark.asyncio
     async def test_process_basic_query(self, session_manager):
         """基本流程：无 session 的简单查询"""
-        llm = MockLLM()
+        llm = LayerMockLLM()
         layer = QueryUnderstandingLayer(llm, session_manager)
         ctx = await layer.process("什么是RAG？")
 
@@ -60,7 +50,7 @@ class TestQueryUnderstandingLayerProcess:
     @pytest.mark.asyncio
     async def test_process_short_circuits_on_unclear_query(self, session_manager):
         """模糊问题短路返回，不继续检索"""
-        llm = MockLLM()
+        llm = LayerMockLLM()
         llm.intent_response = (
             '{"intent": "concept", "is_clear": false, '
             '"clarification_question": "您想了解什么内容？"}'
@@ -76,7 +66,7 @@ class TestQueryUnderstandingLayerProcess:
     @pytest.mark.asyncio
     async def test_process_with_session(self, session_manager):
         """有 session 时触发多轮上下文融合"""
-        llm = MockLLM()
+        llm = LayerMockLLM()
         llm.fuse_response = "申请年假需要什么材料？"
         layer = QueryUnderstandingLayer(llm, session_manager)
 
@@ -93,7 +83,7 @@ class TestQueryUnderstandingLayerProcess:
     @pytest.mark.asyncio
     async def test_process_no_session_skips_fusion(self, session_manager):
         """无 session_id 时跳过融合步骤"""
-        llm = MockLLM()
+        llm = LayerMockLLM()
         layer = QueryUnderstandingLayer(llm, session_manager)
         ctx = await layer.process("独立问题", session_id=None)
 
@@ -103,7 +93,7 @@ class TestQueryUnderstandingLayerProcess:
     @pytest.mark.asyncio
     async def test_process_with_collection(self, session_manager):
         """collection 参数正确传递到 PipelineContext"""
-        llm = MockLLM()
+        llm = LayerMockLLM()
         layer = QueryUnderstandingLayer(llm, session_manager)
         ctx = await layer.process("查询", collection="tech_docs")
         assert ctx.collection == "tech_docs"
@@ -127,7 +117,7 @@ class TestQueryUnderstandingLayerProcess:
     @pytest.mark.asyncio
     async def test_process_rewritten_queries_contain_original(self, session_manager):
         """验证原始 query 在 rewritten_queries 结果中"""
-        llm = MockLLM()
+        llm = LayerMockLLM()
         layer = QueryUnderstandingLayer(llm, session_manager)
         ctx = await layer.process("原始查询")
         # 原始查询（经过别名映射后）在第一位

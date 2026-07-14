@@ -1,17 +1,7 @@
 """HyDERewriter 测试"""
 import pytest
-from types import SimpleNamespace
 from query.rewriters.hyde import HyDERewriter
-
-
-class MockLLM:
-    def __init__(self, response="这是假设答案文本"):
-        self.response = response
-        self.calls = []
-
-    async def ainvoke(self, prompt, **kwargs):
-        self.calls.append((prompt, kwargs))
-        return SimpleNamespace(content=self.response)
+from tests.unit.query.conftest import MockLLM
 
 
 class TestHyDERewriter:
@@ -41,9 +31,5 @@ class TestHyDERewriter:
                 raise RuntimeError("timeout")
 
         rewriter = HyDERewriter(FailingLLM())
-        # 不应该抛异常，返回空 list（由 QueryRewriter 编排层处理）
-        try:
-            result = await rewriter.rewrite("test")
-        except RuntimeError:
-            result = []
+        result = await rewriter.rewrite("test")
         assert result == []

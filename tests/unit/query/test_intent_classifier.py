@@ -1,23 +1,8 @@
 """IntentClassifier 测试"""
 import pytest
-from types import SimpleNamespace
 from models.enums import Intent
 from query.intent_classifier import IntentResult, IntentClassifier
-
-
-class MockLLM:
-    """模拟 LLM 客户端"""
-
-    def __init__(self, response=None, should_fail=False):
-        self.response = response
-        self.should_fail = should_fail
-        self.calls = []
-
-    async def ainvoke(self, prompt, **kwargs):
-        self.calls.append((prompt, kwargs))
-        if self.should_fail:
-            raise RuntimeError("LLM timeout")
-        return SimpleNamespace(content=self.response)
+from tests.unit.query.conftest import MockLLM
 
 
 @pytest.fixture

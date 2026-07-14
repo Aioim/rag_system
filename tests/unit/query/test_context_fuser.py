@@ -1,31 +1,8 @@
 """ContextFuser 测试"""
-import tempfile
-from pathlib import Path
-from types import SimpleNamespace
-
 import pytest
-from session.store import SessionStore
 from session.manager import SessionManager
 from query.context_fuser import ContextFuser
-
-
-class MockLLM:
-    def __init__(self, response=None):
-        self.response = response
-        self.calls = []
-
-    async def ainvoke(self, prompt, **kwargs):
-        self.calls.append((prompt, kwargs))
-        return SimpleNamespace(content=self.response)
-
-
-@pytest.fixture
-def session_manager():
-    db_path = Path(tempfile.mkdtemp()) / "test.db"
-    store = SessionStore(db_path=db_path)
-    mgr = SessionManager(store=store)
-    yield mgr
-    store.close()
+from tests.unit.query.conftest import MockLLM
 
 
 class TestContextFuser:
@@ -92,4 +69,3 @@ class TestContextFuser:
         prompt = llm.calls[0][0]
         assert "VPN怎么连接" in prompt
         assert "它的密码怎么改" in prompt
-
