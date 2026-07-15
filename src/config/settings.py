@@ -44,6 +44,7 @@ class RetrievalConfig(_BaseConfig):
     top_k: int = 5
     expansion_window: int = 1
     rrf_k: int = 60
+    max_rerank_candidates: int = 30
     mmr_lambda: float = 0.7
     relevance_threshold_sufficient: float = 0.5
     relevance_threshold_need_more: float = 0.3

@@ -29,6 +29,7 @@ retrieval:
   top_k: 5
   expansion_window: 1            # 上下文扩展窗口（向左右各拉 N 个 chunk）
   rrf_k: 60                      # RRF 融合参数
+  max_rerank_candidates: 30      # RRF 后进入精排的候选上限（CPU CrossEncoder 延迟保护）
   mmr_lambda: 0.7                # MMR 多样性控制
   relevance_threshold_sufficient: 0.5   # 结果充分 → 直接生成
   relevance_threshold_need_more: 0.3    # 需要补充检索

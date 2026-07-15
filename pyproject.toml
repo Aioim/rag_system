@@ -46,6 +46,7 @@ retrieval = [
     "sentence-transformers>=3.3",
     "FlagEmbedding>=1.3",
     "rank-bm25>=0.2",
+    "jieba>=0.42",
 ]
 
 # 离线文档处理 Pipeline（异步）
@@ -107,7 +108,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["config", "logger", "security", "model", "models", "ingestion"]
+known-first-party = ["config", "logger", "security", "model", "models", "ingestion", "retrieval"]
 
 [tool.ruff.format]
 quote-style = "double"
