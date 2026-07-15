@@ -1,0 +1,155 @@
+"""FAISSStore — FAISS 索引 + docstore 只读访问（每 collection 一个实例）"""
+import json
+import threading
+
+import faiss
+import numpy as np
+
+from logger import logger
+from models.chunk import Chunk
+
+
+class FAISSStore:
+    """单 collection 的 FAISS 索引 + docstore 只读封装
+
+    线程安全懒加载；reload() 热重载并递增 version（BM25 缓存失效依据）。
+    """
+
+    def __init__(self, collection: str):
+        self.collection = collection
+        self.version = 0
+        self._lock = threading.Lock()
+        self._index = None
+        self._docstore: dict = {}     # chunk_id -> entry
+        self._id_map: dict = {}       # faiss_id -> chunk_id
+        self._loaded = False
+
+    # ---- 加载 ----------------------------------------------------------
+
+    def load(self) -> None:
+        """幂等加载；collection 目录不存在抛 ValueError"""
+        if self._loaded:
+            return
+        with self._lock:
+            if not self._loaded:
+                self._load_unlocked()
+
+    def _load_unlocked(self) -> None:
+        from config import settings
+
+        index_dir = settings.faiss.index_dir / self.collection
+        if not index_dir.exists():
+            raise ValueError(f"Collection '{self.collection}' 不存在: {index_dir}")
+
+        index_path = index_dir / "index.faiss"
+        self._index = None
+        if index_path.exists():
+            index = faiss.read_index(str(index_path))
+            if isinstance(index, faiss.IndexIVFFlat):
+                index.nprobe = settings.faiss.nprobe
+                index.make_direct_map()   # MMR 需 reconstruct 原始向量
+            self._index = index
+
+        self._docstore = {}
+        docstore_path = index_dir / "docstore.json"
+        if docstore_path.exists():
+            with open(docstore_path, encoding="utf-8") as f:
+                self._docstore = json.load(f)
+
+        self._id_map = {
+            entry["faiss_id"]: cid
+            for cid, entry in self._docstore.items()
+            if "faiss_id" in entry
+        }
+        self._loaded = True
+
+    def reload(self) -> None:
+        """热重载（索引更新后调用）；version 递增使 BM25 缓存失效"""
+        with self._lock:
+            self._loaded = False
+            self._load_unlocked()
+            self.version += 1
+
+    # ---- 查询 ----------------------------------------------------------
+
+    @property
+    def is_empty(self) -> bool:
+        return self._index is None or self._index.ntotal == 0
+
+    def get_chunk(self, chunk_id: str) -> Chunk | None:
+        """docstore entry → 新 Chunk 实例（每次新建，防调用方污染）"""
+        entry = self._docstore.get(chunk_id)
+        if entry is None:
+            return None
+        return Chunk(
+            chunk_id=chunk_id,
+            doc_id=entry.get("doc_id", ""),
+            text=entry.get("text", ""),
+            chunk_index=entry.get("chunk_index", 0),
+            prev_chunk_id=entry.get("prev_chunk_id"),
+            next_chunk_id=entry.get("next_chunk_id"),
+            metadata=dict(entry.get("metadata", {})),
+        )
+
+    def search(self, vector: np.ndarray, k: int) -> list[str]:
+        """FAISS 向量搜索 → 按相关度降序的 chunk_id 列表"""
+        if self.is_empty:
+            return []
+        k = min(k, self._index.ntotal)
+        _, ids = self._index.search(
+            vector.reshape(1, -1).astype(np.float32), k
+        )
+        result = []
+        for faiss_id in ids[0]:
+            if faiss_id < 0:
+                continue
+            chunk_id = self._id_map.get(int(faiss_id))
+            if chunk_id is None:
+                logger.warning(
+                    "FAISS id %s 在 docstore 中不存在，已跳过", faiss_id
+                )
+                continue
+            result.append(chunk_id)
+        return result
+
+    def reconstruct(self, chunk_id: str) -> np.ndarray | None:
+        """取 chunk 的原始向量（MMR 多样性计算用）"""
+        entry = self._docstore.get(chunk_id)
+        if entry is None or "faiss_id" not in entry or self._index is None:
+            return None
+        try:
+            return self._index.reconstruct(int(entry["faiss_id"]))
+        except RuntimeError:
+            return None
+
+    def all_chunks(self) -> list[tuple[str, str]]:
+        """(chunk_id, text) 列表，供 BM25 建索引"""
+        return [
+            (cid, entry.get("text", ""))
+            for cid, entry in self._docstore.items()
+        ]
+
+
+# ---- 模块级 store 缓存 ---------------------------------------------------
+
+_stores: dict[str, FAISSStore] = {}
+_stores_lock = threading.Lock()
+
+
+def get_store(collection: str) -> FAISSStore:
+    """获取（并懒加载）collection 对应的 FAISSStore 单例"""
+    store = _stores.get(collection)
+    if store is None:
+        with _stores_lock:
+            store = _stores.get(collection)
+            if store is None:
+                store = FAISSStore(collection)
+                _stores[collection] = store
+    store.load()
+    return store
+
+
+def reset_stores() -> None:
+    """清空 store 缓存（测试用）"""
+    with _stores_lock:
+        _stores.clear()
