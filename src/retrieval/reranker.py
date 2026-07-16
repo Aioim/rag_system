@@ -49,7 +49,7 @@ class Reranker:
             return []
         pairs = [(query, c.text) for c in chunks]
         scores = self._ce.predict(pairs)
-        for c, s in zip(chunks, scores):
+        for c, s in zip(chunks, scores, strict=True):
             c.rerank_score = float(s)
         return sorted(chunks, key=lambda c: c.rerank_score, reverse=True)
 

@@ -105,6 +105,9 @@ select = [
 ignore = [
     "E501",    # line-too-long (handled by formatter)
     "B008",    # do-not-perform-function-calls-in-default-types
+    "RUF001",  # Chinese fullwidth punctuation in strings is intentional
+    "RUF002",  # Chinese fullwidth punctuation in docstrings is intentional
+    "RUF003",  # Chinese fullwidth punctuation in comments is intentional
 ]
 
 [tool.ruff.lint.isort]

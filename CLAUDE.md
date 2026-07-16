@@ -82,7 +82,7 @@ rag0709/
 │   │       └── synonym.py        # SynonymRewriter — 生成同义变体
 │   ├── api/                   # ⬜ FastAPI 路由 + 中间件
 │   ├── core/                  # ⬜ RAG Pipeline 编排
-│   ├── retrieval/             # ⬜ 混合检索 + Rerank + 检索评估
+│   ├── retrieval/             # ✅ 混合检索（向量+BM25+RRF）+ Rerank + Self-RAG 自评
 │   ├── generation/            # ⬜ Prompt 组装 + LLM 路由 + 生成 + 事实核查
 │   ├── ingestion/             # ⬜ 离线文档处理 Pipeline
 │   └── fallback/              # ⬜ 三级兜底处理
@@ -92,7 +92,7 @@ rag0709/
 ## 当前开发阶段
 
 第1期（基础 + 查询理解）已完成：config / security / logger / model / models / session / query。
-第2期（检索 + 生成 + 兜底）和后续阶段待实现。
+第2期进行中：retrieval 已完成；生成 + 兜底待实现。
 
 设计文档参见 `docs/superpowers/specs/2026-07-09-rag-enterprise-qa-design.md`，优化策略全景参见 `RAG优化策略全景图.md`。
 
@@ -179,6 +179,23 @@ reset_query_layer()
 | KeywordRewriter | 0 | BM25 关键词需幂等 |
 | HyDERewriter | 0.3 | 假设答案需受控创意 |
 | SynonymRewriter | 0.3 | 同义变体需多样性 |
+
+### 检索模块
+
+```python
+from retrieval import get_retrieval_layer, reset_retrieval_layer
+
+layer = get_retrieval_layer()      # 单例；embedding/rerank 模型首次检索时懒加载
+ctx = await layer.retrieve(ctx)    # 输入查询理解层产出的 PipelineContext
+# → ctx.candidates      粗召回（向量+BM25 → RRF 融合去重截断）
+# → ctx.reranked        CrossEncoder 精排 + MMR 后的最终 top_k
+# → ctx.retrieval_eval  SUFFICIENT / NEED_MORE / INSUFFICIENT
+reset_retrieval_layer()            # 测试用重置（同时清空 store 缓存）
+```
+
+**Pipeline 流程**：两路并行召回（每条改写 query 各跑向量+BM25，top_k×2）→ RRF 融合去重（截断至 `max_rerank_candidates`）→ prev/next 上下文扩展 → CrossEncoder 精排（对 `ctx.query`）+ MMR → Self-RAG 自评。
+
+BM25 索引启动时从 docstore 内存构建（jieba 分词）；索引更新后调用 `store.reload()` 自动触发 BM25 重建。
 
 ### 会话模块
 

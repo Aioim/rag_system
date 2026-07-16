@@ -33,7 +33,7 @@ class ContextExpander:
             after.append(nxt)
             cur = nxt
 
-        window_chunks = before + [chunk] + after
+        window_chunks = [*before, chunk, *after]
         chunk.metadata["window_chunk_ids"] = [c.chunk_id for c in window_chunks]
         chunk.text = "\n".join(c.text for c in window_chunks)
         return chunk

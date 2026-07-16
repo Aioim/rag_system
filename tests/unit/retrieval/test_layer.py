@@ -1,4 +1,6 @@
 """RetrievalLayer 编排 + 单例测试（小索引端到端，mock 模型）"""
+import typing
+
 import numpy as np
 import pytest
 
@@ -11,7 +13,7 @@ from tests.unit.retrieval.conftest import DIM, make_chunk, one_hot, write_chunks
 class MockEncoder:
     """按关键词映射到 one-hot 向量"""
 
-    TOPICS = {"年假": 0, "薪资": 1, "报销": 2}
+    TOPICS: typing.ClassVar[dict[str, int]] = {"年假": 0, "薪资": 1, "报销": 2}
 
     def encode(self, texts):
         vecs = []

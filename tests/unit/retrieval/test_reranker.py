@@ -1,4 +1,6 @@
 """Reranker（CrossEncoder 精排 + MMR）测试"""
+import typing
+
 import numpy as np
 
 from models.chunk import Chunk
@@ -33,7 +35,7 @@ class TestReranker:
 
 class TestMMRSelect:
     # a/b 向量相同（冗余），c 正交（多样）
-    VECTORS = {
+    VECTORS: typing.ClassVar[dict[str, np.ndarray]] = {
         "a": np.array([1.0, 0.0], dtype=np.float32),
         "b": np.array([1.0, 0.0], dtype=np.float32),
         "c": np.array([0.0, 1.0], dtype=np.float32),
