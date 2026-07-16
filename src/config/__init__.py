@@ -15,6 +15,11 @@ from config.settings import (
     AliasConfig,
     ModelConfig,
     LogConfig,
+    FaissConfig,
+    FinetuneConfig,
+    FinetuneTrainingConfig,
+    FinetuneLoraConfig,
+    FinetuneDistillationConfig,
 )
 from config.yaml_loader import YamlLoader
 from config.path import PROJECT_ROOT
@@ -39,6 +44,11 @@ __all__ = [
     "AliasConfig",
     "ModelConfig",
     "LogConfig",
+    "FaissConfig",
+    "FinetuneConfig",
+    "FinetuneTrainingConfig",
+    "FinetuneLoraConfig",
+    "FinetuneDistillationConfig",
     "YamlLoader",
     "PROJECT_ROOT",
     # 别名映射

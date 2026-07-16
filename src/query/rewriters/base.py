@@ -8,7 +8,7 @@ class BaseRewriter:
     提供模板方法 rewrite()：调用 _build_prompt → LLM.ainvoke → _parse_response。
     子类只需覆写 _build_prompt()，可选覆写 _parse_response()。
     也可直接覆写 rewrite() 完全自定义行为。
-    LLM 通过构造函数注入，需符合 LangChain BaseChatModel 接口（async ainvoke(prompt) -> AIMessage）。
+    LLM 通过构造函数注入，需提供 async ainvoke(prompt, **kwargs) 方法，返回对象需有 .content 属性。
     """
 
     def __init__(self, llm=None, temperature: float | None = None):

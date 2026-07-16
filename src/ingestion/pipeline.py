@@ -1,5 +1,6 @@
 """IngestionPipeline — Stage 编排器"""
 
+import asyncio
 import time
 import uuid
 from pathlib import Path
@@ -67,9 +68,12 @@ class IngestionPipeline:
                     time.perf_counter() - t0
                 ) * 1000
 
-        # 3. 写入索引
+        # 3. 写入索引（线程池执行，避免 FAISS I/O 阻塞事件循环）
         try:
-            self.index_writer.write(ctx.chunks, collection)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, self.index_writer.write, ctx.chunks, collection
+            )
         except Exception as e:
             ctx.errors.append(
                 StageError(stage="index_writer", error=str(e), fatal=True)

@@ -28,7 +28,7 @@ class LazyLogger:
                 LogConfig = settings.log
 
                 logger = logging.getLogger(name)
-                
+
                 # 清理旧处理器
                 if logger.handlers:
                     for handler in logger.handlers[:]:
@@ -52,7 +52,7 @@ class LazyLogger:
                     )
                     handler.setFormatter(formatter)
                     logger.addHandler(handler)
-                
+
                 # 添加文件处理器
                 if kwargs.get('log_to_file', True):
                     # 主日志器：文件输出 + 错误日志

@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .secrets_manager import SecretsManager
+from .secrets_manager import secrets as _global_secrets, SecretsManager
 from .secure_env_loader import SecureEnvLoader
 
 
@@ -37,11 +37,10 @@ def encrypt_value(value: str) -> str:
         #>>> encrypt_value("mysecretpassword")
         'ENC[gAAAAABkX9J3mZqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7]'
     """
-    sm = SecretsManager()
-    if not sm._fernet:
+    if not isinstance(_global_secrets, SecretsManager) or not _global_secrets._fernet:
         raise RuntimeError("Fernet not initialized")
 
-    encrypted_bytes = sm._fernet.encrypt(value.encode('utf-8'))
+    encrypted_bytes = _global_secrets._fernet.encrypt(value.encode('utf-8'))
     return f"ENC[{encrypted_bytes.decode('utf-8')}]"
 
 
@@ -66,12 +65,11 @@ def decrypt_value(encrypted_str: str) -> str:
         raise ValueError("Invalid ENC format: must be ENC[...]")
 
     encrypted_b64 = encrypted_str[4:-1]
-    sm = SecretsManager()
-    if not sm._fernet:
+    if not isinstance(_global_secrets, SecretsManager) or not _global_secrets._fernet:
         raise RuntimeError("Fernet not initialized")
 
     encrypted_bytes = encrypted_b64.encode('utf-8')
-    decrypted_bytes = sm._fernet.decrypt(encrypted_bytes)
+    decrypted_bytes = _global_secrets._fernet.decrypt(encrypted_bytes)
     return decrypted_bytes.decode('utf-8')
 
 def fetch_and_decrypt_env_var(env_var: str) -> str:
@@ -275,7 +273,7 @@ Examples:
             decrypted = decrypt_value(args.decrypt)
             print(f"Decrypted value: {decrypted}")
         elif args.encrypt_file:
-            encrypt_env_file(args.encrypt_file, args.output)
+            process_env_file(args.encrypt_file, args.output)
         elif args.key:
             print(f"Encrypting value for {args.key}...")
             try:

@@ -3,6 +3,7 @@
 提供用户术语 → 标准术语的映射功能，支持热更新、双向查询
 """
 
+import re
 from pathlib import Path
 from typing import Dict, Optional
 import yaml
@@ -59,22 +60,39 @@ class AliasManager:
             logger.error("加载别名文件失败 %s: %s", file_path, e)
             return False
 
+    def _check_auto_reload(self) -> None:
+        """检查已加载文件是否被修改，若文件有变更则自动触发重载"""
+        needs_reload = False
+        for file_key, cached_mtime in list(self._file_mtimes.items()):
+            file_path = Path(file_key)
+            if not file_path.exists():
+                needs_reload = True
+                break
+            try:
+                if file_path.stat().st_mtime > cached_mtime:
+                    needs_reload = True
+                    break
+            except OSError:
+                continue
+        if needs_reload:
+            logger.info("检测到别名文件变更，自动重载")
+            self.reload()
+
     def resolve(self, user_term: str) -> str:
-        """将用户术语映射为标准术语，未找到返回原词"""
+        """将用户术语映射为标准术语，未找到返回原词（自动检测文件变更）"""
+        self._check_auto_reload()
         return self._aliases.get(user_term, user_term)
 
     def resolve_all(self, text: str) -> str:
-        """将文本中所有已知的用户术语替换为标准术语（最长匹配优先）"""
+        """将文本中所有已知的用户术语替换为标准术语（最长匹配优先，单次扫描，自动检测文件变更）"""
+        self._check_auto_reload()
         if not self._aliases:
             return text
 
-        # 按长度降序排列，确保最长匹配优先
+        # 按长度降序排列构建正则，确保最长匹配优先
         sorted_terms = sorted(self._aliases.keys(), key=len, reverse=True)
-        result = text
-        for term in sorted_terms:
-            if term in result:
-                result = result.replace(term, self._aliases[term])
-        return result
+        pattern = re.compile("|".join(re.escape(t) for t in sorted_terms))
+        return pattern.sub(lambda m: self._aliases[m.group(0)], text)
 
     def reload(self) -> None:
         """重新加载所有别名"""

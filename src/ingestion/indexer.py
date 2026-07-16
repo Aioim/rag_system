@@ -41,7 +41,7 @@ class FAISSIndexWriter:
         from config import settings
 
         cfg = settings.faiss
-        expected_dim = cfg["dimension"]
+        expected_dim = cfg.dimension
 
         # 维度校验
         for c in chunks:
@@ -54,7 +54,7 @@ class FAISSIndexWriter:
                 )
 
         # 索引目录
-        index_dir = Path(cfg["index_dir"]) / collection
+        index_dir = cfg.index_dir / collection
         index_dir.mkdir(parents=True, exist_ok=True)
 
         index_path = index_dir / "index.faiss"
@@ -70,31 +70,31 @@ class FAISSIndexWriter:
         vectors = np.array([c.embedding for c in chunks], dtype=np.float32)
 
         # 加载或创建 FAISS 索引
-        is_cosine = cfg["metric_type"] == "COSINE"
+        is_cosine = cfg.metric_type == "COSINE"
         _METRIC_IP = getattr(faiss, "METRIC_INNER_PRODUCT", 0)
         if index_path.exists():
             index = faiss.read_index(str(index_path))
             actual_type = type(index).__name__.upper()
-            config_type = cfg["index_type"].upper().replace("_", "")
+            config_type = cfg.index_type.upper().replace("_", "")
             if not actual_type.endswith(config_type):
                 logger.warning(
                     "磁盘索引类型 %s 与配置 index_type=%s 不一致，使用磁盘索引",
-                    actual_type, cfg["index_type"],
+                    actual_type, cfg.index_type,
                 )
         else:
             dim = expected_dim
-            if cfg["index_type"] == "IVF_FLAT":
+            if cfg.index_type == "IVF_FLAT":
                 if is_cosine:
                     quantizer = faiss.IndexFlatIP(dim)
                     index = faiss.IndexIVFFlat(
-                        quantizer, dim, cfg["nlist"], _METRIC_IP
+                        quantizer, dim, cfg.nlist, _METRIC_IP
                     )
                 else:
                     quantizer = faiss.IndexFlatL2(dim)
                     index = faiss.IndexIVFFlat(
-                        quantizer, dim, cfg["nlist"], faiss.METRIC_L2
+                        quantizer, dim, cfg.nlist, faiss.METRIC_L2
                     )
-            elif cfg["index_type"] == "FLAT":
+            elif cfg.index_type == "FLAT":
                 if is_cosine:
                     index = faiss.IndexFlatIP(dim)
                 else:
@@ -111,7 +111,7 @@ class FAISSIndexWriter:
 
         # 训练 IVF
         if isinstance(index, faiss.IndexIVFFlat) and not index.is_trained:
-            if len(vectors) >= cfg["nlist"]:
+            if len(vectors) >= cfg.nlist:
                 index.train(vectors)
             else:
                 # 向量不足时降级为 Flat，保留 metric 语义

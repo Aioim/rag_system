@@ -1,5 +1,6 @@
 """ParserStage — 基于 docling 的多格式文档解析"""
 
+import asyncio
 import threading
 
 from ingestion.context import PipelineContext
@@ -31,7 +32,10 @@ class ParserStage:
 
                         ParserStage._converter = DocumentConverter()
 
-            result = ParserStage._converter.convert(str(source_path))
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, ParserStage._converter.convert, str(source_path)
+            )
             ctx.document.raw_text = result.document.export_to_markdown()
 
         ctx.document.metadata.setdefault("source_path", str(source_path))

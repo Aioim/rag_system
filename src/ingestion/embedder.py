@@ -1,5 +1,6 @@
 """EmbedderStage — 批量 embedding，将向量写回 chunk"""
 
+import asyncio
 import time
 
 from ingestion.context import PipelineContext
@@ -30,11 +31,14 @@ class EmbedderStage:
         total_batches = 0
         t0 = time.perf_counter()
 
+        loop = asyncio.get_running_loop()
         for i in range(0, len(pending), batch_size):
             batch = pending[i: i + batch_size]
             texts = [c.text for c in batch]
-            # TODO: 将同步 encode 提交到线程池避免阻塞 asyncio 事件循环
-            embeddings = self.embedding_model.encode(texts)
+            # 将同步 encode 提交到线程池避免阻塞 asyncio 事件循环
+            embeddings = await loop.run_in_executor(
+                None, self.embedding_model.encode, texts
+            )
             for c, emb in zip(batch, embeddings):
                 c.embedding = emb.tolist() if hasattr(emb, "tolist") else list(emb)
             total_batches += 1

@@ -70,6 +70,7 @@ class RetrievalLayer:
             return ctx
 
         encoder = await loop.run_in_executor(None, self._get_encoder)
+        cross_encoder = await loop.run_in_executor(None, self._get_cross_encoder)
         bm25 = await loop.run_in_executor(None, self._get_bm25, store)
         vector = VectorRetriever(store, encoder)
 
@@ -107,7 +108,7 @@ class RetrievalLayer:
 
         # 4. CrossEncoder 精排（对融合后的标准问法 ctx.query）+ MMR 截断
         t2 = time.perf_counter()
-        reranker = Reranker(self._get_cross_encoder())
+        reranker = Reranker(cross_encoder)
         reranked = await loop.run_in_executor(
             None, reranker.rerank, ctx.query, candidates
         )

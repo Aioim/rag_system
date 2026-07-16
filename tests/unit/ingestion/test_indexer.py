@@ -34,10 +34,10 @@ class TestFAISSIndexWriter:
         with tempfile.TemporaryDirectory() as tmpdir:
             from config import settings
 
-            original_dir = settings.faiss["index_dir"]
-            original_dim = settings.faiss["dimension"]
-            settings.faiss["index_dir"] = tmpdir
-            settings.faiss["dimension"] = 128
+            original_dir = settings.faiss.index_dir
+            original_dim = settings.faiss.dimension
+            settings.faiss.index_dir = Path(tmpdir)
+            settings.faiss.dimension = 128
 
             try:
                 writer = FAISSIndexWriter()
@@ -49,17 +49,17 @@ class TestFAISSIndexWriter:
                 assert (idx_dir / "index.faiss").exists()
                 assert (idx_dir / "docstore.json").exists()
             finally:
-                settings.faiss["index_dir"] = original_dir
-                settings.faiss["dimension"] = original_dim
+                settings.faiss.index_dir = original_dir
+                settings.faiss.dimension = original_dim
 
     def test_docstore_contains_chunk_data(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from config import settings
 
-            original_dir = settings.faiss["index_dir"]
-            original_dim = settings.faiss["dimension"]
-            settings.faiss["index_dir"] = tmpdir
-            settings.faiss["dimension"] = 128
+            original_dir = settings.faiss.index_dir
+            original_dim = settings.faiss.dimension
+            settings.faiss.index_dir = Path(tmpdir)
+            settings.faiss.dimension = 128
 
             try:
                 writer = FAISSIndexWriter()
@@ -75,17 +75,17 @@ class TestFAISSIndexWriter:
                 assert docstore["c-000"]["doc_id"] == "doc-test"
                 assert "faiss_id" in docstore["c-000"]
             finally:
-                settings.faiss["index_dir"] = original_dir
-                settings.faiss["dimension"] = original_dim
+                settings.faiss.index_dir = original_dir
+                settings.faiss.dimension = original_dim
 
     def test_dimension_mismatch_raises(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from config import settings
 
-            original_dir = settings.faiss["index_dir"]
-            original_dim = settings.faiss["dimension"]
-            settings.faiss["index_dir"] = tmpdir
-            settings.faiss["dimension"] = 256
+            original_dir = settings.faiss.index_dir
+            original_dim = settings.faiss.dimension
+            settings.faiss.index_dir = Path(tmpdir)
+            settings.faiss.dimension = 256
 
             try:
                 writer = FAISSIndexWriter()
@@ -93,17 +93,17 @@ class TestFAISSIndexWriter:
                 with pytest.raises(ValueError, match="维度"):
                     writer.write(chunks, "test_collection")
             finally:
-                settings.faiss["index_dir"] = original_dir
-                settings.faiss["dimension"] = original_dim
+                settings.faiss.index_dir = original_dir
+                settings.faiss.dimension = original_dim
 
     def test_append_to_existing_index(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from config import settings
 
-            original_dir = settings.faiss["index_dir"]
-            original_dim = settings.faiss["dimension"]
-            settings.faiss["index_dir"] = tmpdir
-            settings.faiss["dimension"] = 128
+            original_dir = settings.faiss.index_dir
+            original_dim = settings.faiss.dimension
+            settings.faiss.index_dir = Path(tmpdir)
+            settings.faiss.dimension = 128
 
             try:
                 writer = FAISSIndexWriter()
@@ -123,5 +123,5 @@ class TestFAISSIndexWriter:
                     docstore = json.load(f)
                 assert len(docstore) == 5
             finally:
-                settings.faiss["index_dir"] = original_dir
-                settings.faiss["dimension"] = original_dim
+                settings.faiss.index_dir = original_dir
+                settings.faiss.dimension = original_dim

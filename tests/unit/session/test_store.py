@@ -9,7 +9,6 @@ from session.store import SessionStore
 
 @pytest.fixture
 def store():
-    import tempfile
     db_path = Path(tempfile.mkdtemp()) / "test.db"
     s = SessionStore(db_path=db_path)
     yield s

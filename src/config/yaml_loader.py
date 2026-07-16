@@ -1,5 +1,6 @@
 """YAML 配置加载器 — 支持多环境覆盖和缓存"""
 
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Tuple
 import yaml
@@ -35,7 +36,7 @@ class YamlLoader:
         if env in self._cache:
             cached_config, mtime_dict = self._cache[env]
             if self._is_cache_valid(mtime_dict):
-                return deep_merge({}, cached_config)  # 浅拷贝代替 deepcopy
+                return deepcopy(cached_config)  # 深拷贝防止外部修改缓存
 
         # 加载 defaults.yaml 和 {env}.yaml
         base_config, base_mtime = self._load_yaml_with_mtime("defaults.yaml")
@@ -49,7 +50,7 @@ class YamlLoader:
         merged = deep_merge(base_config, env_config)
         mtime_dict = {"defaults.yaml": base_mtime, f"{env}.yaml": env_mtime}
         self._cache[env] = (merged, mtime_dict)
-        return deep_merge({}, merged)  # 返回副本防止外部修改缓存
+        return deepcopy(merged)  # 深拷贝防止外部修改缓存
 
     def _is_cache_valid(self, mtime_dict: Dict[str, float]) -> bool:
         for filename, cached_mtime in mtime_dict.items():

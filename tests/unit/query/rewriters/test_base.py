@@ -35,8 +35,8 @@ def test_subclass_overriding_build_prompt_works():
 
 
 @pytest.mark.asyncio
-async def test_unimplemented_subclass_raises_in_orchestrator():
-    """未覆写 _build_prompt 的子类在编排器中应被感知，原始 query 保留"""
+async def test_unimplemented_subclass_gracefully_handled_by_orchestrator():
+    """未覆写 _build_prompt 的子类在编排器中优雅降级，原始 query 保留"""
     from query.rewriters import QueryRewriter
 
     class IncompleteRewriter(BaseRewriter):

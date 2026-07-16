@@ -136,7 +136,7 @@ async def run_demo():
         # 5. 验证索引
         from config import settings
 
-        index_dir = Path(settings.faiss["index_dir"]) / "demo"
+        index_dir = settings.faiss.index_dir / "demo"
         if index_dir.exists():
             index_size = sum(
                 f.stat().st_size for f in index_dir.rglob("*") if f.is_file()

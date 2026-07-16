@@ -1,18 +1,17 @@
 """多轮上下文融合 — 指代消解 + 追问补全"""
 from config import settings
 from logger import logger
-from session.manager import SessionManager
 
 
 class ContextFuser:
     """将多轮对话中的追问/指代补全为独立完整问题
 
-    SessionManager 用于获取对话历史。
+    session 对象由调用方（QueryUnderstandingLayer）从 SessionManager 获取后传入。
     """
 
-    def __init__(self, llm, session_manager: SessionManager, temperature: float = 0):
+    def __init__(self, llm, session_manager=None, temperature: float = 0):
+        """session_manager 参数已弃用（仅保留以兼容旧调用），不再被内部使用"""
         self._llm = llm
-        self._session_manager = session_manager
         self._temperature = temperature
         self._max_history_msgs = settings.session.max_history_rounds * 2
 

@@ -1,7 +1,25 @@
 # ============================================================================
 # RAG 企业级知识库问答系统 — 默认配置
-# 环境特定配置请创建 {env}.yaml（如 prod.yaml），格式与此文件一致
-# 环境变量覆盖使用双下划线表示嵌套，如 RETRIEVAL__TOP_K=10
+#
+# ⚠️  安全约定：密钥/密码/Token 等敏感信息只允许通过 .env 文件配置，
+#     禁止写入任何 YAML 文件！.env 文件已加入 .gitignore。
+#     支持 Fernet 加密格式：LLM_API_KEY=ENC[base64_ciphertext]
+#     加密工具：python -m security.env_encrypt
+#
+# 配置优先级（高→低）：
+#   CLI 覆盖 > 环境变量/.env > {env}.yaml > defaults.yaml > 代码默认值
+#
+# 环境变量命名规则：
+#   - 双下划线 __ 表示嵌套层级: RETRIEVAL__TOP_K=10 → retrieval.top_k = 10
+#   - 键名不区分大小写
+#   - 若被系统黑名单误过滤，可加 RAG__ 前缀: RAG__RETRIEVAL__TOP_K=10
+#
+# 路径约定：
+#   - 以 / 或盘符开头的路径视为绝对路径
+#   - 其他路径字符串会被 Pydantic 转为相对 Path 对象
+#   - 代码默认值使用 PROJECT_ROOT 拼接为绝对路径
+#
+# 环境特定配置：创建 {env}.yaml（如 prod.yaml），格式与此文件一致
 # ============================================================================
 
 # 项目信息
@@ -53,7 +71,9 @@ session:
   ttl_hours: 2
   max_history_rounds: 10
   max_context_tokens: 4000
+  db_path: data/sessions.db           # 相对于 PROJECT_ROOT；代码默认值 data/sessions.db
   topic_switch_threshold: 0.5
+  cleanup_interval_seconds: 600       # 过期会话清理间隔
 
 # --------------------------------------------------------------------------
 # Embedding 模型
@@ -65,7 +85,7 @@ embedding:
   dimension: 1024
 
 # --------------------------------------------------------------------------
-# LLM 路由
+# LLM 路由 — ⚠️ api_key 禁止在 YAML 配置，请通过 .env 中的 LLM_API_KEY 设置
 # --------------------------------------------------------------------------
 llm:
   default: claude-sonnet-5
@@ -88,14 +108,14 @@ web_search:
   timeout_seconds: 10
 
 # --------------------------------------------------------------------------
-# 模型下载管理
+# 模型下载管理 — ⚠️ hf_token 禁止在 YAML 配置，请通过 .env 中的 HUGGINGFACE_TOKEN 设置
 # --------------------------------------------------------------------------
 model:
   cache_dir: models                   # 模型下载目录（相对于 PROJECT_ROOT）
   default_models:
     embedding: BAAI/bge-large-zh-v1.5
     rerank: BAAI/bge-reranker-v2-m3
-    llm: Qwen/Qwen3-0.6B      # 本地轻量 LLM（预留）
+    llm: Qwen/Qwen2.5-1.5B-Instruct  # 本地轻量 LLM（预留）
   hf_token_env: HUGGINGFACE_TOKEN     # HuggingFace Token 环境变量名
   hf_endpoint: https://hf-mirror.com    # 国内镜像: https://hf-mirror.com；设为 null 使用官方源
   max_retries: 3                      # 网络错误重试次数
@@ -119,15 +139,17 @@ fallback:
   no_answer_message: "抱歉，当前知识库中未找到相关信息，建议补充相关文档或联系管理员。"
 
 # --------------------------------------------------------------------------
-# 别名映射 — file_path 使用代码默认值 PROJECT_ROOT/config/aliases.yaml
+# 别名映射
 # --------------------------------------------------------------------------
 aliases:
+  file_path: config/aliases.yaml      # 相对于 PROJECT_ROOT
   auto_reload: true
 
 # --------------------------------------------------------------------------
-# 日志 — log_dir 使用代码默认值 PROJECT_ROOT/logs
+# 日志
 # --------------------------------------------------------------------------
 log:
+  log_dir: logs                       # 相对于 PROJECT_ROOT；代码默认值 PROJECT_ROOT/logs
   log_level: INFO
   log_file: rag_service.log
   backup_count: 7

@@ -12,7 +12,7 @@ class SynonymRewriter(BaseRewriter):
         """按行拆分，过滤空行"""
         return [
             line.strip()
-            for line in response.strip().split("\n")
+            for line in response.strip().splitlines()
             if line.strip()
         ]
 

@@ -102,7 +102,7 @@ class HierarchicalChunker(_BaseSplitter):
 
             content = section
             if len(content) > self.chunk_size:
-                step = max(self.chunk_size, 1)  # 不在此处做 overlap，统一由外部处理
+                step = max(self.chunk_size - self.overlap, 1)  # 应用 overlap 保持段内连续性
                 for i in range(0, len(content), step):
                     seg = content[i: i + self.chunk_size]
                     if seg.strip():
@@ -118,10 +118,11 @@ class HierarchicalChunker(_BaseSplitter):
 
         # 短章节间添加 overlap，保持上下文连续性
         if self.overlap > 0 and len(chunks) > 1:
+            # 先保存各 chunk 原始尾部，避免原地修改导致链式偏移
+            original_tails = [c.text[-self.overlap:] for c in chunks[:-1]]
             for i in range(1, len(chunks)):
-                prev_end = chunks[i - 1].text[-self.overlap:]
-                if prev_end:
-                    chunks[i].text = prev_end + chunks[i].text
+                if original_tails[i - 1]:
+                    chunks[i].text = original_tails[i - 1] + chunks[i].text
 
         return chunks
 
@@ -218,7 +219,9 @@ class SemanticChunker(_BaseSplitter):
         merged = []
         buffer = ""
         for seg in segments:
-            # 超长段拆分（不在此处做 overlap，统一由外部滑动窗口处理）
+            # 超长段拆分：按 chunk_size 步进切分，不在内部做 overlap。
+            # overlap 统一由外部滑动窗口处理（见 splitter() L204-208），
+            # 否则子段之间会出现双重 overlap 导致文本重复。
             if self._estimate_tokens(seg) > self.chunk_size:
                 if buffer.strip():
                     merged.append(buffer)
@@ -270,10 +273,17 @@ class ChunkerStage:
 
         if strategy == "semantic":
             if self.embedding_model is None:
-                raise ValueError(
-                    "SemanticChunker 需要 embedding_model，"
-                    "请通过 ChunkerStage(embedding_model=...) 传入"
+                ctx.errors.append(
+                    StageError(
+                        stage=self.name,
+                        error=(
+                            "SemanticChunker 需要 embedding_model，"
+                            "请通过 ChunkerStage(embedding_model=...) 传入"
+                        ),
+                        fatal=True,
+                    )
                 )
+                return ctx
             splitter = SemanticChunker(
                 embedding_model=self.embedding_model,
                 chunk_size=cfg.chunk_size,

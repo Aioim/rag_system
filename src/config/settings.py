@@ -68,6 +68,7 @@ class SessionConfig(_BaseConfig):
     max_context_tokens: int = 4000
     db_path: Path = PROJECT_ROOT / "data" / "sessions.db"
     topic_switch_threshold: float = 0.5
+    cleanup_interval_seconds: int = 600
 
     def initialize(self) -> None:
         """创建 db_path 父目录"""
@@ -86,7 +87,11 @@ class EmbeddingConfig(_BaseConfig):
 
 
 class LLMConfig(_BaseConfig):
-    """LLM 路由与 API 配置"""
+    """LLM 路由与 API 配置
+
+    安全约束：api_key 只能通过环境变量或 .env 文件设置，不允许在 YAML 中配置。
+    使用 encrypted .env 时，值格式为 ENC[base64_ciphertext]。
+    """
     default: str = "claude-sonnet-5"
     lightweight: str = "claude-haiku-4-5"
     local: Optional[str] = None
@@ -97,8 +102,21 @@ class LLMConfig(_BaseConfig):
         "concept": 0.3, "procedure": 0.0, "compare": 0.2, "lookup": 0.0,
     })
 
+    @field_validator("api_key")
+    @classmethod
+    def reject_yaml_secret(cls, v: SecretStr) -> SecretStr:
+        """禁止在 YAML 中配置 api_key ─ 密钥只能通过环境变量 / .env 设置"""
+        if v.get_secret_value():
+            raise ValueError(
+                "api_key 不允许在 YAML 中配置！"
+                "请通过环境变量 LLM_API_KEY 设置，或写入 .env 文件"
+                "（支持 ENC[...] Fernet 加密格式，使用 python -m security.env_encrypt 生成）"
+            )
+        return v
+
     @model_validator(mode="after")
     def resolve_api_key(self) -> "LLMConfig":
+        """从环境变量回填 api_key（字段校验器保证 YAML 侧一定为空）"""
         if not self.api_key.get_secret_value():
             env_val = os.getenv(self.api_key_env, "")
             if env_val:
@@ -146,11 +164,11 @@ class ModelConfig(_BaseConfig):
         "llm": "Qwen/Qwen2.5-1.5B-Instruct",
     })
     hf_token_env: str = "HUGGINGFACE_TOKEN"
-    hf_endpoint: Optional[str] = None
+    hf_endpoint: Optional[str] = "https://hf-mirror.com"
     max_retries: int = 3
 
 
-class LogConfig(BaseModel):
+class LogConfig(_BaseConfig):
     """日志配置 — 与 logger 模块兼容"""
     log_dir: Path = PROJECT_ROOT / "logs"
     log_level: str = "INFO"
@@ -188,6 +206,60 @@ class LogConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
 
+class FaissConfig(_BaseConfig):
+    """FAISS 向量数据库配置（第一期）"""
+    index_type: str = "IVF_FLAT"
+    metric_type: str = "COSINE"
+    nlist: int = 100
+    nprobe: int = 10
+    dimension: int = 1024
+    index_dir: Path = PROJECT_ROOT / "data" / "faiss_indexes"
+
+    def initialize(self) -> None:
+        """创建索引持久化目录"""
+        try:
+            self.index_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"⚠️ 无法创建 FAISS 索引目录: {e}", file=sys.stderr)
+
+
+class FinetuneTrainingConfig(_BaseConfig):
+    """微调训练超参数"""
+    epochs: int = 3
+    learning_rate: float = 2.0e-4
+    batch_size: int = 8
+    warmup_ratio: float = 0.1
+    max_seq_length: int = 512
+    gradient_accumulation_steps: int = 4
+    eval_steps: int = 100
+    save_steps: int = 500
+    logging_steps: int = 50
+
+
+class FinetuneLoraConfig(_BaseConfig):
+    """LoRA 适配器配置"""
+    r: int = 8
+    lora_alpha: int = 32
+    lora_dropout: float = 0.1
+    target_modules: Optional[List[str]] = None
+
+
+class FinetuneDistillationConfig(_BaseConfig):
+    """知识蒸馏配置"""
+    temperature: float = 2.0
+    alpha: float = 0.5
+
+
+class FinetuneConfig(_BaseConfig):
+    """模型微调 & 蒸馏配置"""
+    output_dir: Path = PROJECT_ROOT / "models" / "finetuned"
+    device: str = "auto"
+    data_dir: Path = PROJECT_ROOT / "data" / "finetune"
+    training: FinetuneTrainingConfig = Field(default_factory=FinetuneTrainingConfig)
+    lora: FinetuneLoraConfig = Field(default_factory=FinetuneLoraConfig)
+    distillation: FinetuneDistillationConfig = Field(default_factory=FinetuneDistillationConfig)
+
+
 class RAGAppConfig(BaseModel):
     """RAG 应用主配置 — 支持环境变量覆盖（双下划线表示嵌套）"""
     # 核心
@@ -207,23 +279,38 @@ class RAGAppConfig(BaseModel):
     aliases: AliasConfig = Field(default_factory=AliasConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
     log: LogConfig = Field(default_factory=LogConfig)
+    faiss: FaissConfig = Field(default_factory=FaissConfig)
+    finetune: FinetuneConfig = Field(default_factory=FinetuneConfig)
 
     @field_validator("env")
     @classmethod
     def validate_env(cls, v: str) -> str:
         return v.lower()
 
-    # 系统环境变量前缀（不会被注入配置）
+    # 系统环境变量前缀（不会被注入配置）。
+    # 注意：此处采用黑名单方式过滤已知系统变量，覆盖 Windows / Linux / macOS / CI 常见变量。
+    # 若新增配置环境变量与下列前缀冲突，请在自定环境变量前加 RAG__ 前缀以避开过滤。
     _SYSTEM_ENV_PREFIXES: ClassVar[Set[str]] = {
-        "path", "home", "user", "temp", "tmp", "windir", "os", "system",
-        "computername", "username", "userprofile", "allusersprofile",
-        "programfiles", "commonprogramfiles", "appdata", "localappdata",
+        # POSIX / shell
+        "path", "home", "user", "shell", "term", "lang", "lc_", "pwd", "oldpwd",
+        "editor", "display", "xdg", "dbus", "desktop", "wayland", "ssh_", "gpg_",
+        "colour", "colorterm", "vte", "tmux", "iter", "logname", "mail", "hostname",
+        "ps1", "ps2", "ps4", "ifs", "hist", "shlvl", "tty",
+        # Windows
+        "temp", "tmp", "windir", "os", "systemroot", "systemdrive", "homedrive",
+        "computername", "username", "userprofile", "allusersprofile", "userdomain",
+        "programfiles", "commonprogramfiles", "programdata", "appdata", "localappdata",
         "onedrive", "driverdata", "number_of_processors", "processor",
         "sessionname", "logonserver", "public", "psmodulepath", "pathext",
-        "comspec", "homedrive", "systemdrive", "systemroot",
-        "display", "editor", "shell", "term", "lang", "lc_", "xdg",
-        "dbus", "desktop", "display", "wayland", "ssh_", "gpg_",
-        "colour", "colorterm", "vte", "tmux", "iter", "old",
+        "comspec", "commonprogramw6432", "programw6432",
+        # 通用 / CI / 容器
+        "ci", "build_", "jenkins", "github_", "gitlab", "travis", "circle",
+        "docker", "kubernetes", "kube", "nomad", "container",
+        "java_home", "conda", "virtual_env", "python", "pip", "pyenv",
+        "npm_", "node_", "yarn_", "cargo", "rustup", "gopath", "goroot",
+        "aws_", "azure_", "gcloud", "google_application",
+        "no_proxy", "http_proxy", "https_proxy", "ftp_proxy", "all_proxy",
+        "ssl_", "tls_", "require_https",
     }
 
     @classmethod
@@ -232,12 +319,20 @@ class RAGAppConfig(BaseModel):
         从环境变量构建配置字典（过滤系统变量）。
         支持嵌套：双下划线 __ 表示嵌套层级。
         例如 RETRIEVAL__TOP_K=10 → retrieval.top_k = 10
+
+        环境变量键名不区分大小写。所有键统一转为小写处理。
+        若自定义环境变量被系统黑名单误过滤，可加 RAG__ 前缀：
+        例如 RAG__MY_KEY=val → my_key = val
         """
         env_data: Dict[str, Any] = {}
         for key, value in os.environ.items():
             clean_key = key.lower()
-            # 跳过系统环境变量
-            if any(clean_key.startswith(p) for p in cls._SYSTEM_ENV_PREFIXES):
+            # 允许 rag__ 前缀以绕过系统变量黑名单过滤
+            has_rag_prefix = clean_key.startswith("rag__")
+            if has_rag_prefix:
+                clean_key = clean_key[5:]  # 去掉 "rag__" 前缀
+            # 跳过系统环境变量（但 rag__ 前缀的变量不受此限制）
+            if not has_rag_prefix and any(clean_key.startswith(p) for p in cls._SYSTEM_ENV_PREFIXES):
                 continue
             if "__" in clean_key:
                 parts = clean_key.split("__")
@@ -251,16 +346,13 @@ class RAGAppConfig(BaseModel):
 
     @staticmethod
     def _parse_env_value(value: str) -> Any:
-        """将环境变量字符串转换为合适类型"""
+        """将环境变量字符串转换为 bool 或 int；其余保留字符串交由 Pydantic 处理"""
         low = value.lower()
         if low in ("true", "false"):
             return low == "true"
-        try:
-            if "." in value:
-                return float(value)
+        # 仅对纯整数格式做转换（不含小数点，避免 "1.0" 被误判为 float）
+        if value.isdigit() or (value.startswith("-") and value[1:].isdigit()):
             return int(value)
-        except ValueError:
-            pass
         return value
 
     model_config = ConfigDict(protected_namespaces=(), extra="allow")
@@ -284,6 +376,7 @@ class ConfigManager:
                     cls._instance._config: Optional[RAGAppConfig] = None
                     cls._instance._yaml_loader = YamlLoader()
                     cls._instance._overrides: Dict[str, Any] = {}
+                    cls._instance._dict_cache: Optional[Dict[str, Any]] = None
                     cls._instance._initialized = False
         return cls._instance
 
@@ -314,6 +407,7 @@ class ConfigManager:
                         self._config = self._load_full_config()
                         self._config.log.initialize()
                         self._config.session.initialize()
+                        self._config.faiss.initialize()
                         # 从配置路径加载别名（若与默认路径不同）
                         from config.aliases import alias_manager as _am
                         _am.load(self._config.aliases.file_path)
@@ -332,11 +426,18 @@ class ConfigManager:
                 f"配置中不存在属性 '{name}'. 可用属性: {', '.join(available[:20])}"
             )
 
+    def __repr__(self) -> str:
+        if self._config is None:
+            return "<ConfigManager (uninitialized)>"
+        return f"<ConfigManager env={self._config.env} debug={self._config.debug}>"
+
     def get(self, path: str, default: Any = None) -> Any:
         """通过点号路径获取嵌套配置，如 settings.get('retrieval.top_k')"""
         if self._config is None:
             self.initialize()
-        current: Any = self._config.model_dump()
+        if self._dict_cache is None:
+            self._dict_cache = self._config.model_dump()
+        current: Any = self._dict_cache
         for key in path.split("."):
             if isinstance(current, dict) and key in current:
                 current = current[key]
@@ -345,14 +446,14 @@ class ConfigManager:
         return current
 
     def apply_overrides(self, overrides_str: str) -> None:
-        """解析命令行覆盖字符串 'key=value,key2.subkey=value2'
+        """解析命令行覆盖字符串，以分号分隔: 'key=value;key2.subkey=value2'
 
         若已初始化则自动重载使覆盖生效。
         """
         if not overrides_str:
             return
         new_overrides: Dict[str, Any] = {}
-        pairs = overrides_str.split(",")
+        pairs = overrides_str.split(";")
         for pair in pairs:
             if "=" not in pair:
                 continue
@@ -396,8 +497,10 @@ class ConfigManager:
         merged = deep_merge(data, RAGAppConfig.from_env())
         merged = deep_merge(merged, self._overrides)
         self._config = RAGAppConfig(**merged)
+        self._dict_cache = None
         self._config.log.initialize()
         self._config.session.initialize()
+        self._config.faiss.initialize()
         self._initialized = True
 
     def to_yaml(self) -> str:
@@ -410,9 +513,14 @@ class ConfigManager:
     def reload(self) -> None:
         """热重载配置（清空缓存并重新加载）"""
         self._yaml_loader.clear_cache()
-        self._config = None
-        self._initialized = False
+        with self._lock:
+            self._config = None
+            self._dict_cache = None
+            self._initialized = False
         self.initialize()
+        # 别名文件可能已变更，强制重新加载
+        from config.aliases import alias_manager as _am
+        _am.reload()
 
 
 # ============================================================================
@@ -438,6 +546,11 @@ __all__ = [
     "AliasConfig",
     "ModelConfig",
     "LogConfig",
+    "FaissConfig",
+    "FinetuneConfig",
+    "FinetuneTrainingConfig",
+    "FinetuneLoraConfig",
+    "FinetuneDistillationConfig",
 ]
 
 if __name__ == "__main__":

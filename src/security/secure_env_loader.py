@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple, Set
 from cryptography.fernet import InvalidToken
 
-from security.secrets_manager import SecretsManager
+from security.secrets_manager import secrets as _global_secrets, SecretsManager
 from security.secret_str import SecretStr
 from logger import security_logger, logger
 
@@ -34,7 +34,7 @@ class SecureEnvLoader:
 
     def __init__(self, env_file: Optional[Path] = None):
         self.env_file = env_file or Path('.env')
-        self.secrets_manager = SecretsManager()
+        self.secrets_manager = _global_secrets  # 复用模块级单例，避免重复加载密钥
         self._loaded_values: Dict[str, str] = {}
         self._decryption_errors: Dict[str, str] = {}
 
@@ -137,11 +137,13 @@ class SecureEnvLoader:
 
     def _unescape_value(self, value: str) -> str:
         value = value.strip().strip('"').strip("'")
-        return value.replace('\\\\', '\\').replace('\\n', '\n').replace('\\t', '\t')
+        # 注意：必须先处理 \n \t 再处理 \\，否则 \\n → \ + n → 被后续误转为换行
+        value = value.replace('\\n', '\n').replace('\\t', '\t')
+        return value.replace('\\\\', '\\')
 
     def _decrypt_env_value(self, encrypted_b64: str) -> str:
         encrypted_bytes = encrypted_b64.encode('utf-8')
-        if not self.secrets_manager._fernet:
+        if not isinstance(self.secrets_manager, SecretsManager) or not self.secrets_manager._fernet:
             raise RuntimeError("Fernet not initialized")
         try:
             decrypted_bytes = self.secrets_manager._fernet.decrypt(encrypted_bytes)

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from config import settings
-from retrieval.store import FAISSStore, get_store, reset_stores
+from retrieval.store import get_store, reset_stores
 from tests.unit.retrieval.conftest import make_chunk, one_hot, write_chunks
 
 
