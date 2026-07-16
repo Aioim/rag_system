@@ -58,7 +58,7 @@ def _cosine(a: np.ndarray | None, b: np.ndarray | None) -> float:
     if a is None or b is None:
         return 0.0
     denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-    if denom == 0.0:
+    if denom < 1e-10:
         return 0.0
     return float(np.dot(a, b) / denom)
 
@@ -72,9 +72,10 @@ def mmr_select(
     """MMR 贪心：score = λ·rerank_score - (1-λ)·max_sim(已选)"""
     if not chunks:
         return []
+    # 按 rerank_score 降序排序（调用方传入已排序列表，此为防御性保证）
     pool = sorted(chunks, key=lambda c: c.rerank_score, reverse=True)
-    if len(pool) <= top_k:
-        return pool
+    if len(pool) <= top_k or top_k == 0:
+        return pool[:top_k]
 
     selected = [pool.pop(0)]
     while pool and len(selected) < top_k:

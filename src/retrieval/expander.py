@@ -11,6 +11,9 @@ class ContextExpander:
 
     def expand(self, chunk: Chunk, window: int) -> Chunk:
         """向左右各拉 window 个邻居，按 chunk_index 顺序拼接写回 chunk.text"""
+        if "window_chunk_ids" in chunk.metadata:  # 已扩展，幂等返回
+            return chunk
+
         before: list[Chunk] = []
         cur = chunk
         for _ in range(window):

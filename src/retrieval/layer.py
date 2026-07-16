@@ -3,6 +3,7 @@
 召回(向量+BM25 并行) → RRF 融合去重 → 上下文扩展 → 精排+MMR → Self-RAG 自评
 """
 import asyncio
+import threading
 import time
 
 from logger import logger
@@ -24,6 +25,7 @@ class RetrievalLayer:
         self._encoder = encoder
         self._cross_encoder = cross_encoder
         self._bm25_cache: dict[str, BM25Retriever] = {}
+        self._bm25_lock = threading.Lock()
 
     # ---- 懒加载 --------------------------------------------------------
 
@@ -39,11 +41,17 @@ class RetrievalLayer:
 
     def _get_bm25(self, store: FAISSStore) -> BM25Retriever:
         """按 collection 缓存；store 热重载（version 变化）后重建"""
-        cached = self._bm25_cache.get(store.collection)
-        if cached is None or cached.version != store.version:
-            cached = BM25Retriever(store)
-            self._bm25_cache[store.collection] = cached
-        return cached
+        with self._bm25_lock:
+            cached = self._bm25_cache.get(store.collection)
+            if cached is None or cached.version != store.version:
+                cached = BM25Retriever(store)
+                self._bm25_cache[store.collection] = cached
+            return cached
+
+    @staticmethod
+    def _reconstruct_vectors(store: FAISSStore, reranked: list) -> dict:
+        """线程池中执行 reconstruct，避免阻塞事件循环"""
+        return {c.chunk_id: store.reconstruct(c.chunk_id) for c in reranked}
 
     # ---- 主流程 --------------------------------------------------------
 
@@ -112,7 +120,9 @@ class RetrievalLayer:
         reranked = await loop.run_in_executor(
             None, reranker.rerank, ctx.query, candidates
         )
-        vectors = {c.chunk_id: store.reconstruct(c.chunk_id) for c in reranked}
+        vectors = await loop.run_in_executor(
+            None, self._reconstruct_vectors, store, reranked
+        )
         ctx.reranked = mmr_select(reranked, vectors, cfg.top_k, cfg.mmr_lambda)
         ctx.metadata["retrieval_rerank_ms"] = (time.perf_counter() - t2) * 1000
 

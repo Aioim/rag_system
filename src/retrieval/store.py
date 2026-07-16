@@ -51,6 +51,7 @@ class FAISSStore:
             self._index = index
 
         self._docstore = {}
+        self._id_map = {}
         docstore_path = index_dir / "docstore.json"
         if docstore_path.exists():
             with open(docstore_path, encoding="utf-8") as f:
@@ -74,11 +75,13 @@ class FAISSStore:
 
     @property
     def is_empty(self) -> bool:
-        return self._index is None or self._index.ntotal == 0
+        index = self._index  # 局部快照，防 TOCTOU（reload 可能在检查间隙置 None）
+        return index is None or index.ntotal == 0
 
     def get_chunk(self, chunk_id: str) -> Chunk | None:
         """docstore entry → 新 Chunk 实例（每次新建，防调用方污染）"""
-        entry = self._docstore.get(chunk_id)
+        docstore = self._docstore  # 局部快照，防 reload 并发放置空
+        entry = docstore.get(chunk_id)
         if entry is None:
             return None
         return Chunk(
@@ -93,17 +96,19 @@ class FAISSStore:
 
     def search(self, vector: np.ndarray, k: int) -> list[str]:
         """FAISS 向量搜索 → 按相关度降序的 chunk_id 列表"""
-        if self.is_empty:
+        index = self._index  # 局部快照，防 reload 并发放置空
+        if index is None or index.ntotal == 0:
             return []
-        k = min(k, self._index.ntotal)
-        _, ids = self._index.search(
+        id_map = self._id_map
+        k = min(k, index.ntotal)
+        _, ids = index.search(
             vector.reshape(1, -1).astype(np.float32), k
         )
         result = []
         for faiss_id in ids[0]:
             if faiss_id < 0:
                 continue
-            chunk_id = self._id_map.get(int(faiss_id))
+            chunk_id = id_map.get(int(faiss_id))
             if chunk_id is None:
                 logger.warning(
                     "FAISS id %s 在 docstore 中不存在，已跳过", faiss_id
@@ -114,19 +119,22 @@ class FAISSStore:
 
     def reconstruct(self, chunk_id: str) -> np.ndarray | None:
         """取 chunk 的原始向量（MMR 多样性计算用）"""
-        entry = self._docstore.get(chunk_id)
-        if entry is None or "faiss_id" not in entry or self._index is None:
+        docstore = self._docstore  # 局部快照
+        entry = docstore.get(chunk_id)
+        index = self._index
+        if entry is None or "faiss_id" not in entry or index is None:
             return None
         try:
-            return self._index.reconstruct(int(entry["faiss_id"]))
+            return index.reconstruct(int(entry["faiss_id"]))
         except RuntimeError:
             return None
 
     def all_chunks(self) -> list[tuple[str, str]]:
         """(chunk_id, text) 列表，供 BM25 建索引"""
+        docstore = self._docstore  # 局部快照
         return [
             (cid, entry.get("text", ""))
-            for cid, entry in self._docstore.items()
+            for cid, entry in docstore.items()
         ]
 
 

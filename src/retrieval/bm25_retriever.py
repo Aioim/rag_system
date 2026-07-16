@@ -14,8 +14,8 @@ class BM25Retriever:
     """构建时记录 store.version，供上层判断索引热重载后是否需要重建"""
 
     def __init__(self, store):
+        pairs = store.all_chunks()       # 先取数据，后读版本号（防 TOCTOU）
         self.version = store.version
-        pairs = store.all_chunks()
         self._chunk_ids = [cid for cid, _ in pairs]
         corpus = [_tokenize(text) for _, text in pairs]
         self._bm25 = BM25Okapi(corpus) if corpus else None
