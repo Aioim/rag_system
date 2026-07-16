@@ -13,15 +13,17 @@ class FAISSStore:
     """单 collection 的 FAISS 索引 + docstore 只读封装
 
     线程安全懒加载；reload() 热重载并递增 version（BM25 缓存失效依据）。
+
+    使用 _state 元组原子快照 (_index, _docstore, _id_map)，
+    保证跨字段一致性：reload() 原子替换整个元组，读取者
+    通过单次引用读取获得一致的三元组快照。
     """
 
     def __init__(self, collection: str):
         self.collection = collection
         self.version = 0
         self._lock = threading.Lock()
-        self._index = None
-        self._docstore: dict = {}     # chunk_id -> entry
-        self._id_map: dict = {}       # faiss_id -> chunk_id
+        self._state: tuple = (None, {}, {})  # (_index, _docstore, _id_map)
         self._loaded = False
 
     # ---- 加载 ----------------------------------------------------------
@@ -42,26 +44,30 @@ class FAISSStore:
             raise ValueError(f"Collection '{self.collection}' 不存在: {index_dir}")
 
         index_path = index_dir / "index.faiss"
-        self._index = None
+        index = None
         if index_path.exists():
             index = faiss.read_index(str(index_path))
             if isinstance(index, faiss.IndexIVFFlat):
                 index.nprobe = settings.faiss.nprobe
                 index.make_direct_map()   # MMR 需 reconstruct 原始向量
-            self._index = index
 
-        self._docstore = {}
-        self._id_map = {}
+        docstore = {}
         docstore_path = index_dir / "docstore.json"
         if docstore_path.exists():
-            with open(docstore_path, encoding="utf-8") as f:
-                self._docstore = json.load(f)
+            try:
+                with open(docstore_path, encoding="utf-8") as f:
+                    docstore = json.load(f)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.error("docstore.json 加载失败 (%s): %s", self.collection, e)
 
-        self._id_map = {
+        id_map = {
             entry["faiss_id"]: cid
-            for cid, entry in self._docstore.items()
+            for cid, entry in docstore.items()
             if "faiss_id" in entry
         }
+
+        # 原子替换整个状态元组，保证跨字段一致性
+        self._state = (index, docstore, id_map)
         self._loaded = True
 
     def reload(self) -> None:
@@ -75,12 +81,12 @@ class FAISSStore:
 
     @property
     def is_empty(self) -> bool:
-        index = self._index  # 局部快照，防 TOCTOU（reload 可能在检查间隙置 None）
+        index = self._state[0]  # 通过 _state 元组原子读取
         return index is None or index.ntotal == 0
 
     def get_chunk(self, chunk_id: str) -> Chunk | None:
         """docstore entry → 新 Chunk 实例（每次新建，防调用方污染）"""
-        docstore = self._docstore  # 局部快照，防 reload 并发放置空
+        _, docstore, _ = self._state  # 原子快照
         entry = docstore.get(chunk_id)
         if entry is None:
             return None
@@ -96,10 +102,11 @@ class FAISSStore:
 
     def search(self, vector: np.ndarray, k: int) -> list[str]:
         """FAISS 向量搜索 → 按相关度降序的 chunk_id 列表"""
-        index = self._index  # 局部快照，防 reload 并发放置空
+        if k <= 0:
+            return []
+        index, _, id_map = self._state  # 原子快照，保证 index 与 id_map 同代
         if index is None or index.ntotal == 0:
             return []
-        id_map = self._id_map
         k = min(k, index.ntotal)
         _, ids = index.search(
             vector.reshape(1, -1).astype(np.float32), k
@@ -119,9 +126,8 @@ class FAISSStore:
 
     def reconstruct(self, chunk_id: str) -> np.ndarray | None:
         """取 chunk 的原始向量（MMR 多样性计算用）"""
-        docstore = self._docstore  # 局部快照
+        index, docstore, _ = self._state  # 原子快照，保证 index 与 docstore 同代
         entry = docstore.get(chunk_id)
-        index = self._index
         if entry is None or "faiss_id" not in entry or index is None:
             return None
         try:
@@ -131,7 +137,7 @@ class FAISSStore:
 
     def all_chunks(self) -> list[tuple[str, str]]:
         """(chunk_id, text) 列表，供 BM25 建索引"""
-        docstore = self._docstore  # 局部快照
+        _, docstore, _ = self._state  # 原子快照
         return [
             (cid, entry.get("text", ""))
             for cid, entry in docstore.items()

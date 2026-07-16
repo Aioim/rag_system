@@ -11,6 +11,11 @@ def evaluate(reranked: list[Chunk]) -> RetrievalEval:
     from config import settings
 
     cfg = settings.retrieval
+    # 防御性断言：配置错误时尽早暴露，避免自评逻辑反转
+    assert cfg.relevance_threshold_sufficient >= cfg.relevance_threshold_need_more, (
+        f"配置错误: relevance_threshold_sufficient ({cfg.relevance_threshold_sufficient}) "
+        f"必须 >= relevance_threshold_need_more ({cfg.relevance_threshold_need_more})"
+    )
     avg = sum(c.rerank_score for c in reranked) / len(reranked)
     if avg >= cfg.relevance_threshold_sufficient:
         return RetrievalEval.SUFFICIENT

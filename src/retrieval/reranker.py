@@ -74,8 +74,8 @@ def mmr_select(
         return []
     # 按 rerank_score 降序排序（调用方传入已排序列表，此为防御性保证）
     pool = sorted(chunks, key=lambda c: c.rerank_score, reverse=True)
-    if len(pool) <= top_k or top_k == 0:
-        return pool[:top_k]
+    if len(pool) <= top_k or top_k <= 0:
+        return pool[:max(top_k, 0)]
 
     selected = [pool.pop(0)]
     while pool and len(selected) < top_k:

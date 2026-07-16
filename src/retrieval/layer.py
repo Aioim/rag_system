@@ -41,6 +41,11 @@ class RetrievalLayer:
 
     def _get_bm25(self, store: FAISSStore) -> BM25Retriever:
         """按 collection 缓存；store 热重载（version 变化）后重建"""
+        # 快速路径：无锁查缓存（GIL 保证 dict.get 原子性）
+        cached = self._bm25_cache.get(store.collection)
+        if cached is not None and cached.version == store.version:
+            return cached
+        # 慢速路径：加锁二次检查后构建
         with self._bm25_lock:
             cached = self._bm25_cache.get(store.collection)
             if cached is None or cached.version != store.version:
