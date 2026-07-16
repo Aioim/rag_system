@@ -1,0 +1,120 @@
+"""RetrievalLayer — 检索层主编排器
+
+召回(向量+BM25 并行) → RRF 融合去重 → 上下文扩展 → 精排+MMR → Self-RAG 自评
+"""
+import asyncio
+import time
+
+from logger import logger
+from models.context import PipelineContext
+from models.enums import RetrievalEval
+from retrieval.bm25_retriever import BM25Retriever
+from retrieval.evaluator import evaluate
+from retrieval.expander import ContextExpander
+from retrieval.fusion import rrf_fuse
+from retrieval.reranker import Reranker, load_cross_encoder, mmr_select
+from retrieval.store import FAISSStore, get_store
+from retrieval.vector_retriever import VectorRetriever, load_embedding_model
+
+
+class RetrievalLayer:
+    """encoder/cross_encoder 为 None 时首次 retrieve 懒加载真实模型（测试注入 mock）"""
+
+    def __init__(self, encoder=None, cross_encoder=None):
+        self._encoder = encoder
+        self._cross_encoder = cross_encoder
+        self._bm25_cache: dict[str, BM25Retriever] = {}
+
+    # ---- 懒加载 --------------------------------------------------------
+
+    def _get_encoder(self):
+        if self._encoder is None:
+            self._encoder = load_embedding_model()
+        return self._encoder
+
+    def _get_cross_encoder(self):
+        if self._cross_encoder is None:
+            self._cross_encoder = load_cross_encoder()
+        return self._cross_encoder
+
+    def _get_bm25(self, store: FAISSStore) -> BM25Retriever:
+        """按 collection 缓存；store 热重载（version 变化）后重建"""
+        cached = self._bm25_cache.get(store.collection)
+        if cached is None or cached.version != store.version:
+            cached = BM25Retriever(store)
+            self._bm25_cache[store.collection] = cached
+        return cached
+
+    # ---- 主流程 --------------------------------------------------------
+
+    @staticmethod
+    def _safe_retrieve(retriever, query: str, k: int, path: str) -> list[str]:
+        """单路召回失败降级为空结果，另一路继续"""
+        try:
+            return retriever.retrieve(query, k)
+        except Exception as e:
+            logger.error("召回路 [%s] 失败: %s", path, e)
+            return []
+
+    async def retrieve(self, ctx: PipelineContext) -> PipelineContext:
+        from config import settings
+
+        cfg = settings.retrieval
+        loop = asyncio.get_running_loop()
+
+        # store 加载（faiss IO）与 BM25 构建/模型加载均为重活，走线程池
+        store = await loop.run_in_executor(None, get_store, ctx.collection)
+        if store.is_empty:
+            ctx.candidates, ctx.reranked = [], []
+            ctx.retrieval_eval = RetrievalEval.INSUFFICIENT
+            return ctx
+
+        encoder = await loop.run_in_executor(None, self._get_encoder)
+        bm25 = await loop.run_in_executor(None, self._get_bm25, store)
+        vector = VectorRetriever(store, encoder)
+
+        # 1. 每条 query 并行两路召回，每路 top_k×2
+        queries = ctx.rewritten_queries or [ctx.query]
+        recall_k = cfg.top_k * 2
+        t0 = time.perf_counter()
+        tasks = []
+        for q in queries:
+            tasks.append(loop.run_in_executor(
+                None, self._safe_retrieve, vector, q, recall_k, "vector"))
+            tasks.append(loop.run_in_executor(
+                None, self._safe_retrieve, bm25, q, recall_k, "bm25"))
+        ranked_lists = list(await asyncio.gather(*tasks))
+        ctx.metadata["retrieval_recall_ms"] = (time.perf_counter() - t0) * 1000
+
+        # 2. RRF 融合去重 + 截断 → candidates
+        fused = rrf_fuse(ranked_lists, cfg.rrf_k, cfg.max_rerank_candidates)
+        candidates = []
+        for chunk_id, score in fused:
+            c = store.get_chunk(chunk_id)
+            if c is None:
+                logger.warning("chunk %s 在 docstore 中不存在，已跳过", chunk_id)
+                continue
+            c.metadata["rrf_score"] = score
+            candidates.append(c)
+        ctx.candidates = candidates
+
+        # 3. 上下文扩展（docstore 内存读，无需线程池）
+        t1 = time.perf_counter()
+        expander = ContextExpander(store)
+        for c in candidates:
+            expander.expand(c, cfg.expansion_window)
+        ctx.metadata["retrieval_expand_ms"] = (time.perf_counter() - t1) * 1000
+
+        # 4. CrossEncoder 精排（对融合后的标准问法 ctx.query）+ MMR 截断
+        t2 = time.perf_counter()
+        reranker = Reranker(self._get_cross_encoder())
+        reranked = await loop.run_in_executor(
+            None, reranker.rerank, ctx.query, candidates
+        )
+        vectors = {c.chunk_id: store.reconstruct(c.chunk_id) for c in reranked}
+        ctx.reranked = mmr_select(reranked, vectors, cfg.top_k, cfg.mmr_lambda)
+        ctx.metadata["retrieval_rerank_ms"] = (time.perf_counter() - t2) * 1000
+
+        # 5. Self-RAG 自评
+        ctx.retrieval_eval = evaluate(ctx.reranked)
+        return ctx
