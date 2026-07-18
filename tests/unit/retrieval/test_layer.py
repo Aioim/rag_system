@@ -27,10 +27,12 @@ class MockEncoder:
 
 
 class MockCrossEncoder:
-    def predict(self, pairs):
-        return np.array(
-            [0.9 if "年假" in text else 0.1 for _, text in pairs]
-        )
+    def rank(self, query, documents, **kwargs):
+        results = [
+            {"corpus_id": i, "score": 0.9 if "年假" in doc else 0.1, "text": doc}
+            for i, doc in enumerate(documents)
+        ]
+        return sorted(results, key=lambda r: r["score"], reverse=True)
 
 
 def _write_corpus():
@@ -113,6 +115,20 @@ class TestRetrievalLayer:
         ctx = PipelineContext(query="年假审批", collection="test")
         ctx = await _layer().retrieve(ctx)
         assert ctx.reranked, "向量单路仍应产出结果"
+
+    async def test_system_exit_propagated(self, faiss_env, monkeypatch):
+        """SystemExit 不被 gather 降级吞噬，正确传播退出（防进程挂起）"""
+        _write_corpus()
+        from retrieval.bm25_retriever import BM25Retriever
+
+        def _raise_system_exit(self, query, k):
+            raise SystemExit(42)
+
+        monkeypatch.setattr(BM25Retriever, "retrieve", _raise_system_exit)
+        ctx = PipelineContext(query="年假审批", collection="test")
+        with pytest.raises(SystemExit) as exc_info:
+            await _layer().retrieve(ctx)
+        assert exc_info.value.code == 42
 
 
 class TestSingleton:

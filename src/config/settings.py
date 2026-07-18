@@ -41,15 +41,25 @@ class APIConfig(_BaseConfig):
 
 class RetrievalConfig(_BaseConfig):
     """检索配置"""
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1)
     expansion_window: int = 1
-    rrf_k: int = 60
+    rrf_k: int = Field(default=60, gt=0)
     max_rerank_candidates: int = 30
-    mmr_lambda: float = 0.7
+    mmr_lambda: float = Field(default=0.7, ge=0.0, le=1.0)
     relevance_threshold_sufficient: float = 0.5
     relevance_threshold_need_more: float = 0.3
     similarity_dedup_threshold: float = 0.85
     max_context_tokens: int = 6000
+
+    @model_validator(mode="after")
+    def check_threshold_order(self) -> "RetrievalConfig":
+        """阈值顺序反转会使 Self-RAG 自评逻辑静默出错，配置加载时尽早暴露"""
+        if self.relevance_threshold_sufficient < self.relevance_threshold_need_more:
+            raise ValueError(
+                f"relevance_threshold_sufficient ({self.relevance_threshold_sufficient}) "
+                f"必须 >= relevance_threshold_need_more ({self.relevance_threshold_need_more})"
+            )
+        return self
 
 
 class ChunkingConfig(_BaseConfig):

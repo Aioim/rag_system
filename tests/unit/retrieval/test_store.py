@@ -12,6 +12,19 @@ class TestFAISSStore:
         with pytest.raises(ValueError, match="nonexistent"):
             get_store("nonexistent")
 
+    @pytest.mark.parametrize("name", ["../evil", "a/b", "a\\b", "..", ""])
+    def test_illegal_collection_name_raises(self, faiss_env, name):
+        """collection 名称含路径分隔符/..或为空 → 拒绝（防路径遍历）"""
+        with pytest.raises(ValueError, match="非法 collection"):
+            get_store(name)
+
+    def test_corrupt_docstore_raises(self, faiss_env):
+        """docstore.json 损坏 → 显式报错，不静默降级为空结果"""
+        write_chunks([make_chunk(0, "t0", one_hot(0))])
+        (faiss_env / "test" / "docstore.json").write_text("{bad json", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="docstore"):
+            get_store("test")
+
     def test_get_chunk_builds_chunk(self, faiss_env):
         write_chunks([
             make_chunk(0, "文本零", one_hot(0), prev_id=None, next_id="c1"),

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- `langchain` >= 1.4.0, `langgraph` >= 1.2.0
+- `langchain` > 1.3.0, `langgraph` >= 1.2.0
 - Python >= 3.11
 - Ruff line-length 100, double quotes
 - 测试目录：`tests/unit/ingestion/`，源文件目录：`src/ingestion/`

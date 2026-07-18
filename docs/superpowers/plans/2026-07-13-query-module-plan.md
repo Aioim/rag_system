@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- `langchain` >= 1.4.0, `langgraph` >= 1.2.0（本期不直接依赖）
+- `langchain` > 1.3.0, `langgraph` >= 1.2.0（本期不直接依赖）
 - 测试用 pytest + `pytest-asyncio`，mock LLM 而非真实调用
 - 代码风格参照已有模块：`from config import settings` / `from logger import logger`
 - LLM 接口通过 duck-typing 注入，需有 `async generate(prompt: str, **kwargs) -> str` 方法

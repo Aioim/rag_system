@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+每进行到下一个子任务时，同步更新文档，保持文档与代码的一致性
 
 ## 项目目标
 
@@ -12,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 框架版本要求
 
-- `langchain` >= 1.4.0
+- `langchain` > 1.3.0
 - `langgraph` >= 1.2.0
 
 ## 技术栈
@@ -84,14 +85,23 @@ rag0709/
 │   ├── core/                  # ⬜ RAG Pipeline 编排
 │   ├── retrieval/             # ✅ 混合检索（向量+BM25+RRF）+ Rerank + Self-RAG 自评
 │   ├── generation/            # ⬜ Prompt 组装 + LLM 路由 + 生成 + 事实核查
-│   ├── ingestion/             # ⬜ 离线文档处理 Pipeline
+│   ├── ingestion/             # ✅ 离线文档处理 Pipeline（详见 src/ingestion/README.md）
+│   │   ├── __init__.py          # 导出 + create_default_pipeline 工厂
+│   │   ├── __main__.py          # CLI 演示入口 (python -m ingestion)
+│   │   ├── pipeline.py          # IngestionPipeline — Stage 编排器
+│   │   ├── stage.py             # Stage 协议（name/fatal/run）
+│   │   ├── context.py           # PipelineContext / StageError 数据容器
+│   │   ├── parser.py            # ParserStage — docling 解析 PDF/Word/Markdown
+│   │   ├── chunker.py           # ChunkerStage — 语义/固定/层级 三种分块策略
+│   │   ├── embedder.py          # EmbedderStage — 批量 embedding
+│   │   └── indexer.py           # FAISSIndexWriter — 索引持久化
 │   └── fallback/              # ⬜ 三级兜底处理
 └── docs/superpowers/specs/    # 设计文档
 ```
 
 ## 当前开发阶段
 
-第1期（基础 + 查询理解）已完成：config / security / logger / model / models / session / query。
+第1期（基础 + 查询理解 + 文档处理）已完成：config / security / logger / model / models / session / query / ingestion。
 第2期进行中：retrieval 已完成；生成 + 兜底待实现。
 
 设计文档参见 `docs/superpowers/specs/2026-07-09-rag-enterprise-qa-design.md`，优化策略全景参见 `RAG优化策略全景图.md`。
@@ -196,6 +206,39 @@ reset_retrieval_layer()            # 测试用重置（同时清空 store 缓存
 **Pipeline 流程**：两路并行召回（每条改写 query 各跑向量+BM25，top_k×2）→ RRF 融合去重（截断至 `max_rerank_candidates`）→ prev/next 上下文扩展 → CrossEncoder 精排（对 `ctx.query`）+ MMR → Self-RAG 自评。
 
 BM25 索引启动时从 docstore 内存构建（jieba 分词）；索引更新后调用 `store.reload()` 自动触发 BM25 重建。
+
+### Ingestion 模块
+
+```python
+from ingestion import create_default_pipeline
+
+# 组装默认 pipeline（Parser → Chunker → Embedder → FAISSIndexWriter）
+pipeline = create_default_pipeline()   # embedding 模型懒加载，跨调用缓存
+
+# 处理文档并写入索引
+ctx = await pipeline.run(Path("docs/员工手册.md"), collection="hr_docs")
+# → ctx.document        原始文档信息
+# → ctx.chunks          生成的分块（含 embedding）
+# → ctx.status          "done" / "failed"
+# → ctx.errors          非致命错误列表
+# → ctx.metadata        各阶段耗时 (parser_ms / chunker_ms / embedder_ms)
+```
+
+**Pipeline 流程**：Parser（docling 解析 PDF/Word/Markdown → Markdown 文本）→ Chunker（三种策略：语义/SentenceTransformer、固定窗口、Markdown 层级）→ Embedder（批量编码，写回 chunk.embedding）→ FAISSIndexWriter（向量+docstore 持久化）
+
+**Chunker 策略说明**：
+
+| 策略 | 实现 | 适用场景 |
+|------|------|----------|
+| SemanticChunker | SemanticChunker | 通用文档，自适应语义边界 |
+| FixedWindowChunker | 固定窗口 + 滑动步长 | 结构化较弱的文本 |
+| HierarchicalChunker | 按 Markdown 标题层级 | 层级清晰的文档 |
+
+**Stage 协议**：每个阶段实现 `name`（标识）、`fatal`（是否中断 pipeline）、`async def run(ctx) -> PipelineContext`。写入已嵌入的 chunk 时 EmbedderStage 自动跳过幂等。
+
+**CLI 演示**：`python -m ingestion` 内置员工手册示例文档，自动检查/下载 embedding 模型，输出处理统计和索引文件。
+
+**与 retrieval 的关系**：ingestion 负责将原始文档处理后写入 FAISS 索引（离线）；retrieval 负责从索引中检索（在线）。两者通过 FAISSStore 读写同一套 `{index_dir}/{collection}/` 目录结构。
 
 ### 会话模块
 

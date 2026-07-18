@@ -1,14 +1,19 @@
 """VectorRetriever — 查询编码 + FAISS 向量召回"""
 import threading
+from typing import TYPE_CHECKING
 
 import faiss
 import numpy as np
 
-_embedding_model = None
+if TYPE_CHECKING:
+    from retrieval.store import FAISSStore
+    from sentence_transformers import SentenceTransformer
+
+_embedding_model: "SentenceTransformer | None" = None
 _model_lock = threading.Lock()
 
 
-def load_embedding_model():
+def load_embedding_model() -> "SentenceTransformer":
     """从本地路径加载 SentenceTransformer（进程内缓存）
 
     未下载时抛 RuntimeError 并提示下载命令，不自动触发下载。
@@ -38,7 +43,7 @@ def load_embedding_model():
 class VectorRetriever:
     """查询 → encoder 编码（COSINE 时归一化，与写入侧一致）→ FAISS 搜索"""
 
-    def __init__(self, store, encoder):
+    def __init__(self, store: "FAISSStore", encoder: "SentenceTransformer"):
         self._store = store
         self._encoder = encoder
 

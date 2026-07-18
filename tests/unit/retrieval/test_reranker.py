@@ -13,12 +13,14 @@ def _chunk(cid: str, text: str = "", score: float = 0.0) -> Chunk:
 
 
 class MockCrossEncoder:
-    """含"年假"的文本高分，其余低分"""
+    """含"年假"的文本高分，其余低分；rank() 按分数降序返回"""
 
-    def predict(self, pairs):
-        return np.array(
-            [0.9 if "年假" in text else 0.2 for _, text in pairs]
-        )
+    def rank(self, query, documents, **kwargs):
+        results = [
+            {"corpus_id": i, "score": 0.9 if "年假" in doc else 0.2, "text": doc}
+            for i, doc in enumerate(documents)
+        ]
+        return sorted(results, key=lambda r: r["score"], reverse=True)
 
 
 class TestReranker:

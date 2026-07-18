@@ -10,7 +10,7 @@
 
 ## 全局约束
 
-- `langchain` >= 1.4.0, `langgraph` >= 1.2.0
+- `langchain` > 1.3.0, `langgraph` >= 1.2.0
 - 不引入 Unsloth 或非 HuggingFace 生态的训练框架
 - 蒸馏教师仅支持云端 API（黑盒蒸馏）
 - 第一期训练数据仅支持外部 JSONL 导入

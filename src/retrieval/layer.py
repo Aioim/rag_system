@@ -5,8 +5,16 @@
 import asyncio
 import threading
 import time
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+if TYPE_CHECKING:
+    from sentence_transformers import CrossEncoder
+    from sentence_transformers import SentenceTransformer
 
 from logger import logger
+from models.chunk import Chunk
 from models.context import PipelineContext
 from models.enums import RetrievalEval
 from retrieval.bm25_retriever import BM25Retriever
@@ -21,7 +29,7 @@ from retrieval.vector_retriever import VectorRetriever, load_embedding_model
 class RetrievalLayer:
     """encoder/cross_encoder 为 None 时首次 retrieve 懒加载真实模型（测试注入 mock）"""
 
-    def __init__(self, encoder=None, cross_encoder=None):
+    def __init__(self, encoder: "SentenceTransformer | None" = None, cross_encoder: "CrossEncoder | None" = None):
         self._encoder = encoder
         self._cross_encoder = cross_encoder
         self._bm25_cache: dict[str, BM25Retriever] = {}
@@ -29,12 +37,12 @@ class RetrievalLayer:
 
     # ---- 懒加载 --------------------------------------------------------
 
-    def _get_encoder(self):
+    def _get_encoder(self) -> "SentenceTransformer":
         if self._encoder is None:
             self._encoder = load_embedding_model()
         return self._encoder
 
-    def _get_cross_encoder(self):
+    def _get_cross_encoder(self) -> "CrossEncoder":
         if self._cross_encoder is None:
             self._cross_encoder = load_cross_encoder()
         return self._cross_encoder
@@ -54,14 +62,20 @@ class RetrievalLayer:
             return cached
 
     @staticmethod
-    def _reconstruct_vectors(store: FAISSStore, reranked: list) -> dict:
-        """线程池中执行 reconstruct，避免阻塞事件循环"""
-        return {c.chunk_id: store.reconstruct(c.chunk_id) for c in reranked}
+    def _reconstruct_vectors(store: FAISSStore, reranked: list[Chunk]) -> dict[str, np.ndarray | None]:
+        """线程池中执行 reconstruct，避免阻塞事件循环；失败记 None（MMR 按完全多样处理）"""
+        vectors: dict[str, np.ndarray | None] = {}
+        for c in reranked:
+            vec = store.reconstruct(c.chunk_id)
+            if vec is None:
+                logger.warning("chunk %s 向量重建失败，MMR 相似度按 0 处理", c.chunk_id)
+            vectors[c.chunk_id] = vec
+        return vectors
 
     # ---- 主流程 --------------------------------------------------------
 
     @staticmethod
-    def _safe_retrieve(retriever, query: str, k: int, path: str) -> list[str]:
+    def _safe_retrieve(retriever: VectorRetriever | BM25Retriever, query: str, k: int, path: str) -> list[str]:
         """单路召回失败降级为空结果，另一路继续"""
         try:
             return retriever.retrieve(query, k)
@@ -82,9 +96,12 @@ class RetrievalLayer:
             ctx.retrieval_eval = RetrievalEval.INSUFFICIENT
             return ctx
 
-        encoder = await loop.run_in_executor(None, self._get_encoder)
-        cross_encoder = await loop.run_in_executor(None, self._get_cross_encoder)
-        bm25 = await loop.run_in_executor(None, self._get_bm25, store)
+        # 三者相互独立，并行加载（冷启动时模型加载为秒级重活）
+        encoder, cross_encoder, bm25 = await asyncio.gather(
+            loop.run_in_executor(None, self._get_encoder),
+            loop.run_in_executor(None, self._get_cross_encoder),
+            loop.run_in_executor(None, self._get_bm25, store),
+        )
         vector = VectorRetriever(store, encoder)
 
         # 1. 每条 query 并行两路召回，每路 top_k×2
@@ -97,7 +114,16 @@ class RetrievalLayer:
                 None, self._safe_retrieve, vector, q, recall_k, "vector"))
             tasks.append(loop.run_in_executor(
                 None, self._safe_retrieve, bm25, q, recall_k, "bm25"))
-        ranked_lists = list(await asyncio.gather(*tasks))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        ranked_lists = []
+        for r in results:
+            if isinstance(r, BaseException):
+                if isinstance(r, (KeyboardInterrupt, SystemExit)):
+                    raise r
+                # _safe_retrieve 已捕获 Exception，此处兜底其余 BaseException，避免丢弃已成功的召回路
+                logger.error("召回任务异常: %s", r)
+                r = []
+            ranked_lists.append(r)
         ctx.metadata["retrieval_recall_ms"] = (time.perf_counter() - t0) * 1000
 
         # 2. RRF 融合去重 + 截断 → candidates

@@ -20,6 +20,9 @@ class FAISSStore:
     """
 
     def __init__(self, collection: str):
+        # 防路径遍历：collection 将拼接到索引目录路径，拒绝分隔符 / .. / 空值
+        if not collection or "/" in collection or "\\" in collection or ".." in collection:
+            raise ValueError(f"非法 collection 名称: {collection!r}")
         self.collection = collection
         self.version = 0
         self._lock = threading.Lock()
@@ -58,7 +61,11 @@ class FAISSStore:
                 with open(docstore_path, encoding="utf-8") as f:
                     docstore = json.load(f)
             except (json.JSONDecodeError, OSError) as e:
-                logger.error("docstore.json 加载失败 (%s): %s", self.collection, e)
+                # 显式失败：静默降级为空 docstore 会导致检索返回全空结果且无错误信号；
+                # 不置 _loaded，文件修复后下次调用可重试
+                raise RuntimeError(
+                    f"Collection '{self.collection}' docstore 加载失败: {e}"
+                ) from e
 
         id_map = {
             entry["faiss_id"]: cid
@@ -132,7 +139,8 @@ class FAISSStore:
             return None
         try:
             return index.reconstruct(int(entry["faiss_id"]))
-        except RuntimeError:
+        except (RuntimeError, ValueError, TypeError):
+            # RuntimeError: faiss 内部错误；ValueError/TypeError: faiss_id 数据损坏
             return None
 
     def all_chunks(self) -> list[tuple[str, str]]:

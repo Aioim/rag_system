@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 必须保持向后兼容：所有现有 pytest 测试必须继续通过
-- `langchain >= 1.4.0`，`langgraph >= 1.2.0`
+- `langchain > 1.3.0`，`langgraph >= 1.2.0`
 - LLM 接口：`async ainvoke(prompt, **kwargs) -> AIMessage`（`.content` 属性）
 - 遵循项目 CLAUDE.md：最小代码、精准改动、不改相邻代码
 - 温度约定：IntentClassifier=0, ContextFuser=0, KeywordRewriter=0, HyDERewriter=0.3, SynonymRewriter=0.3

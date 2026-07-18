@@ -35,7 +35,7 @@ class TestContextExpander:
         store = FakeStore(CHAIN)
         c = store.get_chunk("c1")
         result = ContextExpander(store).expand(c, window=1)
-        assert result is c
+        assert result is None  # 纯副作用函数：原地修改 chunk，无返回值
         assert c.text == "t0\nt1\nt2"
         assert c.metadata["window_chunk_ids"] == ["c0", "c1", "c2"]
 
