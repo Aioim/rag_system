@@ -84,7 +84,13 @@ rag0709/
 │   ├── api/                   # ⬜ FastAPI 路由 + 中间件
 │   ├── core/                  # ⬜ RAG Pipeline 编排
 │   ├── retrieval/             # ✅ 混合检索（向量+BM25+RRF）+ Rerank + Self-RAG 自评
-│   ├── generation/            # ⬜ Prompt 组装 + LLM 路由 + 生成 + 事实核查
+│   ├── generation/            # ✅ 生成层（Prompt 组装 / 模型路由 / 生成 / 事实核查 / 引用标注）
+│   │   ├── __init__.py          # 导出 + get_generation_layer 单例工厂
+│   │   ├── layer.py             # GenerationLayer — 生成层主编排器
+│   │   ├── prompt_assembler.py  # PromptAssembler — 去重/上下文组装/拼接
+│   │   ├── llm_router.py        # LLMRouter — 按意图路由模型+加载模板
+│   │   ├── fact_checker.py      # FactChecker — 断言拆解+逐条核查(Lightweight)
+│   │   └── citation_builder.py  # CitationBuilder — Chunk → Source引用列表
 │   ├── ingestion/             # ✅ 离线文档处理 Pipeline（详见 src/ingestion/README.md）
 │   │   ├── __init__.py          # 导出 + create_default_pipeline 工厂
 │   │   ├── __main__.py          # CLI 演示入口 (python -m ingestion)
@@ -102,7 +108,7 @@ rag0709/
 ## 当前开发阶段
 
 第1期（基础 + 查询理解 + 文档处理）已完成：config / security / logger / model / models / session / query / ingestion。
-第2期进行中：retrieval 已完成；生成 + 兜底待实现。
+第2期进行中：retrieval 已完成；generation 已完成；兜底 + API 待实现。
 
 设计文档参见 `docs/superpowers/specs/2026-07-09-rag-enterprise-qa-design.md`，优化策略全景参见 `RAG优化策略全景图.md`。
 
@@ -206,6 +212,33 @@ reset_retrieval_layer()            # 测试用重置（同时清空 store 缓存
 **Pipeline 流程**：两路并行召回（每条改写 query 各跑向量+BM25，top_k×2）→ RRF 融合去重（截断至 `max_rerank_candidates`）→ prev/next 上下文扩展 → CrossEncoder 精排（对 `ctx.query`）+ MMR → Self-RAG 自评。
 
 BM25 索引启动时从 docstore 内存构建（jieba 分词）；索引更新后调用 `store.reload()` 自动触发 BM25 重建。
+
+### 生成模块
+
+```python
+from generation import get_generation_layer, reset_generation_layer
+
+layer = get_generation_layer(llm)   # 单例；LLM 由上层 core 创建并注入
+ctx = await layer.generate(ctx)     # 输入 retrieval 层产出的 ctx（含 reranked + intent）
+# → ctx.answer        LLM 生成的回答（含事实核查警示标注）
+# → ctx.sources       引用来源列表
+# → ctx.confidence    置信度（0.6*rerank_avg + 0.4*fact_pass_rate）
+# → ctx.assembled_prompt  组装后的完整 prompt（调试用）
+reset_generation_layer()            # 测试用重置
+```
+
+**Pipeline 流程**：INSUFFICIENT 短路（不调 LLM）→ NEED_MORE 正常生成+partial 标注 → SUFFICIENT 完整流程（组装 → 路由 → 生成 → 核查 → 引用）。
+
+**路由规则**（纯规则，本期）：lookup/procedure → lightweight（Haiku）；concept/compare → default（Sonnet）。温度从 `settings.llm.temperatures` 按 intent 自动选取。
+
+**事实核查**：调用轻量模型拆分答案为断言列表，逐条判断 supported/unsupported/contradicted，在答案末尾注入警示标注。核查失败不阻塞答案返回。
+
+**配置**（`settings.generation`）：
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `dedup_threshold` | 0.85 | 上下文去重余弦阈值 |
+| `max_context_chars` | 9000 | 上下文预算（≈6000 tokens） |
+| `fact_check_enabled` | true | 事实核查开关 |
 
 ### Ingestion 模块
 

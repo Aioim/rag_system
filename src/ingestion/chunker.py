@@ -314,6 +314,7 @@ class ChunkerStage:
 
         for c in chunks:
             c.doc_id = ctx.document.doc_id
+            c.metadata["doc_title"] = ctx.document.title
 
         ctx.chunks = chunks
 

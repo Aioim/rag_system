@@ -134,6 +134,14 @@ class LLMConfig(_BaseConfig):
         return self
 
 
+class GenerationConfig(_BaseConfig):
+    """生成层配置"""
+    dedup_threshold: float = Field(default=0.85, ge=0.0, le=1.0)   # 上下文去重余弦阈值
+    max_context_chars: int = Field(default=9000, ge=1)             # 上下文字符预算（近似 6000 tokens）
+    max_query_chars: int = Field(default=2000, ge=1)               # 用户 query 截断上限（防 DoS）
+    fact_check_enabled: bool = True                                # 事实核查开关
+
+
 class WebSearchConfig(_BaseConfig):
     """联网搜索兜底配置"""
     enabled: bool = True
@@ -283,6 +291,7 @@ class RAGAppConfig(BaseModel):
     session: SessionConfig = Field(default_factory=SessionConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     milvus: MilvusConfig = Field(default_factory=MilvusConfig)
     fallback: FallbackConfig = Field(default_factory=FallbackConfig)
@@ -550,6 +559,7 @@ __all__ = [
     "SessionConfig",
     "EmbeddingConfig",
     "LLMConfig",
+    "GenerationConfig",
     "WebSearchConfig",
     "MilvusConfig",
     "FallbackConfig",

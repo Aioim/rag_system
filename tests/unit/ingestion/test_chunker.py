@@ -138,6 +138,33 @@ class TestChunkerStage:
             settings.chunking.strategy = original
 
     @pytest.mark.asyncio
+    async def test_chunks_carry_doc_title_metadata(self):
+        """chunk.metadata 写入 doc_title，供生成层引用来源展示"""
+        from config import settings
+
+        original = settings.chunking.strategy
+        settings.chunking.strategy = "fixed"
+
+        try:
+            stage = ChunkerStage()
+            doc = Document(
+                doc_id="d-1",
+                source_path=Path("员工手册.md"),
+                file_type="md",
+                title="员工手册",
+                raw_text="测试内容。" * 30,
+            )
+            ctx = PipelineContext(document=doc)
+            result = await stage.run(ctx)
+
+            assert len(result.chunks) > 0
+            assert all(
+                c.metadata["doc_title"] == "员工手册" for c in result.chunks
+            )
+        finally:
+            settings.chunking.strategy = original
+
+    @pytest.mark.asyncio
     async def test_empty_text_records_error(self):
         stage = ChunkerStage()
         doc = Document(
