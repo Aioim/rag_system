@@ -75,11 +75,15 @@ MILVUS__HOST=192.168.1.100
 |--------|---------|------|
 | `retrieval` | top_k, rrf_k, mmr_lambda, relevance_threshold_* | 检索与精排 |
 | `chunking` | chunk_size, overlap, strategy | 文档分块 |
+| `ingestion` | parsers, parsed_doc_dir, mineru | 离线文档处理 + 解析器选择 |
 | `session` | ttl_hours, db_path, topic_switch_threshold | 会话管理 |
 | `embedding` | model, device, batch_size, dimension | Embedding |
 | `llm` | default, lightweight, api_key_env, temperatures | LLM 路由 |
+| `generation` | dedup_threshold, max_context_chars, fact_check_enabled | 生成控制 |
 | `web_search` | enabled, provider, timeout_seconds | 联网兜底 |
-| `milvus` | host, port, collections, index_type | 向量数据库 |
+| `faiss` | index_type, metric_type, nlist, index_dir | 向量数据库 |
+| `model` | cache_dir, default_models, hf_endpoint | 模型下载管理 |
+| `finetune` | training/lora/distillation 超参 | 模型微调 & 蒸馏 |
 | `fallback` | max_retrieval_rounds, no_answer_message | 兜底策略 |
 | `api` | host, port, cors_origins | API 服务 |
 | `aliases` | auto_reload | 别名映射 |
