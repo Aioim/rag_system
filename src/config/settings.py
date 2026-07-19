@@ -4,24 +4,32 @@ RAG 企业级知识库问答系统 — 配置管理模块
 """
 
 import os
-import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, List, ClassVar, Set
+from typing import Any, ClassVar, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+
 from config.path import PROJECT_ROOT
 from config.yaml_loader import YamlLoader, deep_merge
-
 
 # ============================================================================
 # 配置模型定义
 # ============================================================================
 
 class _BaseConfig(BaseModel):
-    """配置模型基类：允许额外字段"""
+    """配置模型基类：允许额外字段；相对路径统一归一化到 PROJECT_ROOT"""
     model_config = ConfigDict(extra="allow")
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _resolve_relative_path(cls, v: Any) -> Any:
+        """YAML 中的相对路径（如 db_path: data/sessions.db）锚定到
+        PROJECT_ROOT，消除对进程启动目录（CWD）的依赖"""
+        if isinstance(v, Path) and not v.is_absolute():
+            return PROJECT_ROOT / v
+        return v
 
 
 class ProjectConfig(_BaseConfig):
@@ -35,7 +43,7 @@ class APIConfig(_BaseConfig):
     """API 服务配置"""
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: List[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     workers: int = 1
 
 
@@ -62,6 +70,32 @@ class RetrievalConfig(_BaseConfig):
         return self
 
 
+class IngestionConfig(_BaseConfig):
+    """文档处理（离线 Pipeline）配置"""
+    parsed_doc_dir: Path = PROJECT_ROOT / "data" / "parsed_docs"
+    parsers: dict[str, str] = Field(default_factory=lambda: {
+        "pdf": "docling",
+        "docx": "docling",
+        "doc": "docling",
+        "pptx": "docling",
+        "ppt": "docling",
+        "html": "docling",
+        "md": "direct",
+        "markdown": "direct",
+        "txt": "direct",
+    })
+
+    def initialize(self) -> None:
+        """创建解析文档输出目录"""
+        try:
+            self.parsed_doc_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "无法创建解析文档目录 %s: %s", self.parsed_doc_dir, e
+            )
+
+
 class ChunkingConfig(_BaseConfig):
     """文档分块配置"""
     chunk_size: int = 512
@@ -84,8 +118,11 @@ class SessionConfig(_BaseConfig):
         """创建 db_path 父目录"""
         try:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            print(f"⚠️ 无法创建数据目录: {e}", file=sys.stderr)
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "无法创建数据目录 %s: %s", self.db_path.parent, e
+            )
 
 
 class EmbeddingConfig(_BaseConfig):
@@ -104,11 +141,11 @@ class LLMConfig(_BaseConfig):
     """
     default: str = "claude-sonnet-5"
     lightweight: str = "claude-haiku-4-5"
-    local: Optional[str] = None
+    local: str | None = None
     api_key: SecretStr = Field(default=SecretStr(""), exclude=True)
     api_key_env: str = "LLM_API_KEY"
-    api_base_url: Optional[str] = None
-    temperatures: Dict[str, float] = Field(default_factory=lambda: {
+    api_base_url: str | None = None
+    temperatures: dict[str, float] = Field(default_factory=lambda: {
         "concept": 0.3, "procedure": 0.0, "compare": 0.2, "lookup": 0.0,
     })
 
@@ -153,7 +190,7 @@ class MilvusConfig(_BaseConfig):
     """Milvus 向量数据库配置"""
     host: str = "localhost"
     port: int = 19530
-    collections: Dict[str, str] = Field(default_factory=lambda: {"default": "rag_default"})
+    collections: dict[str, str] = Field(default_factory=lambda: {"default": "rag_default"})
     index_type: str = "IVF_FLAT"
     metric_type: str = "COSINE"
     nlist: int = 1024
@@ -176,13 +213,13 @@ class AliasConfig(_BaseConfig):
 class ModelConfig(_BaseConfig):
     """模型下载管理配置"""
     cache_dir: Path = PROJECT_ROOT / "models"
-    default_models: Dict[str, str] = Field(default_factory=lambda: {
+    default_models: dict[str, str] = Field(default_factory=lambda: {
         "embedding": "BAAI/bge-large-zh-v1.5",
         "rerank": "BAAI/bge-reranker-v2-m3",
         "llm": "Qwen/Qwen2.5-1.5B-Instruct",
     })
     hf_token_env: str = "HUGGINGFACE_TOKEN"
-    hf_endpoint: Optional[str] = "https://hf-mirror.com"
+    hf_endpoint: str | None = "https://hf-mirror.com"
     max_retries: int = 3
 
 
@@ -197,7 +234,7 @@ class LogConfig(_BaseConfig):
     quiet: bool = False
     replace_main_with_filename: bool = True
 
-    SENSITIVE_KEYS: ClassVar[Set[str]] = {
+    SENSITIVE_KEYS: ClassVar[set[str]] = {
         "password", "pwd", "pass", "secret", "token", "api_key", "apikey",
         "authorization", "cookie", "x-api-key", "access_token", "refresh_token",
         "new_password", "old_password", "confirm_password", "credit_card",
@@ -217,9 +254,11 @@ class LogConfig(_BaseConfig):
         """初始化日志目录（由日志模块调用）"""
         try:
             self.log_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            if not self.quiet:
-                print(f"⚠️ 无法创建日志目录: {e}", file=sys.stderr)
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "无法创建日志目录 %s: %s", self.log_dir, e
+            )
 
     model_config = ConfigDict(protected_namespaces=())
 
@@ -237,8 +276,11 @@ class FaissConfig(_BaseConfig):
         """创建索引持久化目录"""
         try:
             self.index_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            print(f"⚠️ 无法创建 FAISS 索引目录: {e}", file=sys.stderr)
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "无法创建 FAISS 索引目录 %s: %s", self.index_dir, e
+            )
 
 
 class FinetuneTrainingConfig(_BaseConfig):
@@ -259,7 +301,7 @@ class FinetuneLoraConfig(_BaseConfig):
     r: int = 8
     lora_alpha: int = 32
     lora_dropout: float = 0.1
-    target_modules: Optional[List[str]] = None
+    target_modules: list[str] | None = None
 
 
 class FinetuneDistillationConfig(_BaseConfig):
@@ -286,6 +328,7 @@ class RAGAppConfig(BaseModel):
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     # 各子系统配置
     api: APIConfig = Field(default_factory=APIConfig)
+    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
@@ -306,60 +349,42 @@ class RAGAppConfig(BaseModel):
     def validate_env(cls, v: str) -> str:
         return v.lower()
 
-    # 系统环境变量前缀（不会被注入配置）。
-    # 注意：此处采用黑名单方式过滤已知系统变量，覆盖 Windows / Linux / macOS / CI 常见变量。
-    # 若新增配置环境变量与下列前缀冲突，请在自定环境变量前加 RAG__ 前缀以避开过滤。
-    _SYSTEM_ENV_PREFIXES: ClassVar[Set[str]] = {
-        # POSIX / shell
-        "path", "home", "user", "shell", "term", "lang", "lc_", "pwd", "oldpwd",
-        "editor", "display", "xdg", "dbus", "desktop", "wayland", "ssh_", "gpg_",
-        "colour", "colorterm", "vte", "tmux", "iter", "logname", "mail", "hostname",
-        "ps1", "ps2", "ps4", "ifs", "hist", "shlvl", "tty",
-        # Windows
-        "temp", "tmp", "windir", "os", "systemroot", "systemdrive", "homedrive",
-        "computername", "username", "userprofile", "allusersprofile", "userdomain",
-        "programfiles", "commonprogramfiles", "programdata", "appdata", "localappdata",
-        "onedrive", "driverdata", "number_of_processors", "processor",
-        "sessionname", "logonserver", "public", "psmodulepath", "pathext",
-        "comspec", "commonprogramw6432", "programw6432",
-        # 通用 / CI / 容器
-        "ci", "build_", "jenkins", "github_", "gitlab", "travis", "circle",
-        "docker", "kubernetes", "kube", "nomad", "container",
-        "java_home", "conda", "virtual_env", "python", "pip", "pyenv",
-        "npm_", "node_", "yarn_", "cargo", "rustup", "gopath", "goroot",
-        "aws_", "azure_", "gcloud", "google_application",
-        "no_proxy", "http_proxy", "https_proxy", "ftp_proxy", "all_proxy",
-        "ssl_", "tls_", "require_https",
-    }
+    # 无嵌套（不含 __）时允许注入的顶层标量键
+    _TOP_LEVEL_ENV_KEYS: ClassVar[set[str]] = {"env", "debug"}
 
     @classmethod
-    def from_env(cls) -> Dict[str, Any]:
+    def from_env(cls) -> dict[str, Any]:
         """
-        从环境变量构建配置字典（过滤系统变量）。
+        从环境变量构建配置字典（白名单过滤）。
         支持嵌套：双下划线 __ 表示嵌套层级。
         例如 RETRIEVAL__TOP_K=10 → retrieval.top_k = 10
 
+        过滤规则（白名单，避免系统/无关变量误入配置）：
+        1. RAG__ 前缀：无条件注入（去掉前缀），如 RAG__MY_KEY=val → my_key
+        2. 含 __ 的嵌套变量：根段必须是已声明的配置段（retrieval/llm/...）
+        3. 无 __ 的变量：仅允许 ENV / DEBUG 顶层标量
+
         环境变量键名不区分大小写。所有键统一转为小写处理。
-        若自定义环境变量被系统黑名单误过滤，可加 RAG__ 前缀：
-        例如 RAG__MY_KEY=val → my_key = val
         """
-        env_data: Dict[str, Any] = {}
+        allowed_roots = set(cls.model_fields.keys())
+        env_data: dict[str, Any] = {}
         for key, value in os.environ.items():
             clean_key = key.lower()
-            # 允许 rag__ 前缀以绕过系统变量黑名单过滤
+            # rag__ 前缀无条件放行（去掉前缀后注入）
             has_rag_prefix = clean_key.startswith("rag__")
             if has_rag_prefix:
                 clean_key = clean_key[5:]  # 去掉 "rag__" 前缀
-            # 跳过系统环境变量（但 rag__ 前缀的变量不受此限制）
-            if not has_rag_prefix and any(clean_key.startswith(p) for p in cls._SYSTEM_ENV_PREFIXES):
-                continue
             if "__" in clean_key:
                 parts = clean_key.split("__")
+                if not has_rag_prefix and parts[0] not in allowed_roots:
+                    continue
                 current = env_data
                 for part in parts[:-1]:
                     current = current.setdefault(part, {})
                 current[parts[-1]] = cls._parse_env_value(value)
             else:
+                if not has_rag_prefix and clean_key not in cls._TOP_LEVEL_ENV_KEYS:
+                    continue
                 env_data[clean_key] = cls._parse_env_value(value)
         return env_data
 
@@ -387,15 +412,22 @@ class ConfigManager:
     _instance: ClassVar[Optional["ConfigManager"]] = None
     _lock: ClassVar[threading.Lock] = threading.Lock()
 
+    # 实例属性类型声明（在 __new__ 中初始化，此处为 mypy 类型追踪）
+    _config: RAGAppConfig | None = None
+    _yaml_loader: Any = None  # YamlLoader，延迟引用避免循环
+    _overrides: dict[str, Any] = {}
+    _dict_cache: dict[str, Any] | None = None
+    _initialized: bool = False
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._config: Optional[RAGAppConfig] = None
+                    cls._instance._config = None
                     cls._instance._yaml_loader = YamlLoader()
-                    cls._instance._overrides: Dict[str, Any] = {}
-                    cls._instance._dict_cache: Optional[Dict[str, Any]] = None
+                    cls._instance._overrides = {}
+                    cls._instance._dict_cache = None
                     cls._instance._initialized = False
         return cls._instance
 
@@ -424,6 +456,7 @@ class ConfigManager:
                 if not self._initialized:
                     try:
                         self._config = self._load_full_config()
+                        self._config.ingestion.initialize()
                         self._config.log.initialize()
                         self._config.session.initialize()
                         self._config.faiss.initialize()
@@ -443,7 +476,7 @@ class ConfigManager:
             available = [attr for attr in dir(self._config) if not attr.startswith("_")]
             raise AttributeError(
                 f"配置中不存在属性 '{name}'. 可用属性: {', '.join(available[:20])}"
-            )
+            ) from None
 
     def __repr__(self) -> str:
         if self._config is None:
@@ -454,9 +487,11 @@ class ConfigManager:
         """通过点号路径获取嵌套配置，如 settings.get('retrieval.top_k')"""
         if self._config is None:
             self.initialize()
-        if self._dict_cache is None:
-            self._dict_cache = self._config.model_dump()
-        current: Any = self._dict_cache
+        # _dict_cache 的惰性构建/读取与 reload() 竞争，需在锁内取快照
+        with self._lock:
+            if self._dict_cache is None:
+                self._dict_cache = self._config.model_dump()
+            current: Any = self._dict_cache
         for key in path.split("."):
             if isinstance(current, dict) and key in current:
                 current = current[key]
@@ -471,7 +506,7 @@ class ConfigManager:
         """
         if not overrides_str:
             return
-        new_overrides: Dict[str, Any] = {}
+        new_overrides: dict[str, Any] = {}
         pairs = overrides_str.split(";")
         for pair in pairs:
             if "=" not in pair:
@@ -510,13 +545,14 @@ class ConfigManager:
         """直接加载指定的配置文件，并叠加环境变量覆盖"""
         if not config_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {config_path}")
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         # 叠加环境变量覆盖和命令行覆盖
         merged = deep_merge(data, RAGAppConfig.from_env())
         merged = deep_merge(merged, self._overrides)
         self._config = RAGAppConfig(**merged)
         self._dict_cache = None
+        self._config.ingestion.initialize()
         self._config.log.initialize()
         self._config.session.initialize()
         self._config.faiss.initialize()
@@ -549,28 +585,29 @@ class ConfigManager:
 settings = ConfigManager()
 
 __all__ = [
-    "settings",
-    "ConfigManager",
-    "RAGAppConfig",
-    "ProjectConfig",
     "APIConfig",
-    "RetrievalConfig",
-    "ChunkingConfig",
-    "SessionConfig",
-    "EmbeddingConfig",
-    "LLMConfig",
-    "GenerationConfig",
-    "WebSearchConfig",
-    "MilvusConfig",
-    "FallbackConfig",
     "AliasConfig",
-    "ModelConfig",
-    "LogConfig",
+    "ChunkingConfig",
+    "ConfigManager",
+    "EmbeddingConfig",
     "FaissConfig",
+    "FallbackConfig",
     "FinetuneConfig",
-    "FinetuneTrainingConfig",
-    "FinetuneLoraConfig",
     "FinetuneDistillationConfig",
+    "FinetuneLoraConfig",
+    "FinetuneTrainingConfig",
+    "GenerationConfig",
+    "IngestionConfig",
+    "LLMConfig",
+    "LogConfig",
+    "MilvusConfig",
+    "ModelConfig",
+    "ProjectConfig",
+    "RAGAppConfig",
+    "RetrievalConfig",
+    "SessionConfig",
+    "WebSearchConfig",
+    "settings",
 ]
 
 if __name__ == "__main__":

@@ -49,10 +49,16 @@ retrieval = [
     "jieba>=0.42",
 ]
 
+# 兜底处理：联网搜索
+fallback = [
+    "ddgs>=9.0",
+]
+
 # 离线文档处理 Pipeline（异步）
 ingestion = [
     "arq>=0.26",                # 轻量异步任务队列（预留）
     "docling>=2.0",             # 多格式文档解析（PDF/Word/PPT/HTML/Markdown）
+    "pymupdf4llm>=0.2",        # PyMuPDF4LLM PDF 解析（可选替代 docling）
     "Pillow>=10.0",             # 图片处理（预留 MultiModalStage）
 ]
 
@@ -73,7 +79,7 @@ finetune = [
 
 # 全部依赖
 all = [
-    "rag-service[retrieval,ingestion,dev,finetune]",
+    "rag-service[retrieval,ingestion,dev,finetune,fallback]",
 ]
 
 # ---- CLI 入口（后续随模块实现逐步添加） --------------------------------

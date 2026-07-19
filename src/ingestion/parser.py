@@ -1,19 +1,18 @@
-"""ParserStage — 基于 docling 的多格式文档解析"""
+"""ParserStage — 文档解析阶段，委托给可插拔的解析器后端"""
 
 import asyncio
-import threading
+from pathlib import Path
 
 from ingestion.context import PipelineContext
+from ingestion.parsers import get_parser
+from models.enums import DocumentStatus
 
 
 class ParserStage:
-    """使用 docling 解析 PDF/Word/Markdown → Markdown 文本"""
+    """文档解析 Pipeline Stage — 按配置选择解析器，委托转换并持久化为 .md 文件"""
 
     name = "parser"
     fatal = True
-
-    _converter = None  # 延迟加载，跨文档复用
-    _converter_lock = threading.Lock()
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
         source_path = ctx.document.source_path
@@ -21,24 +20,40 @@ class ParserStage:
         if not source_path.exists():
             raise FileNotFoundError(f"文件不存在: {source_path}")
 
-        if ctx.document.file_type in ("md", "markdown"):
-            ctx.document.raw_text = source_path.read_text(encoding="utf-8")
-        else:
-            # 线程安全的延迟初始化
-            if ParserStage._converter is None:
-                with ParserStage._converter_lock:
-                    if ParserStage._converter is None:
-                        from docling.document_converter import DocumentConverter
+        # 查表获取解析器名称，未配置的格式 fallback 到 docling
+        from config import settings
 
-                        ParserStage._converter = DocumentConverter()
+        parser_name = settings.ingestion.parsers.get(
+            ctx.document.file_type, "docling"
+        )
+        parser = get_parser(parser_name)
 
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, ParserStage._converter.convert, str(source_path)
-            )
-            ctx.document.raw_text = result.document.export_to_markdown()
+        # 委托解析（parse() 是同步方法，通过 run_in_executor 异步化）
+        loop = asyncio.get_running_loop()
+        ctx.document.raw_text = await loop.run_in_executor(
+            None, parser.parse, source_path
+        )
 
-        ctx.document.metadata.setdefault("source_path", str(source_path))
-        ctx.document.metadata.setdefault("file_size", source_path.stat().st_size)
+        # 将解析后的 Markdown 写入磁盘
+        md_path = self._write_markdown(ctx)
+        ctx.document.metadata = {
+            "source_path": str(source_path),
+            "file_size": source_path.stat().st_size,
+            "parsed_md_path": str(md_path),
+            "parser": parser_name,
+            **ctx.document.metadata,  # 已有 key 优先，保留 setdefault 语义
+        }
+        ctx.document.status = DocumentStatus.DONE
 
         return ctx
+
+    @staticmethod
+    def _write_markdown(ctx: PipelineContext) -> Path:
+        """将 raw_text 写入 parsed_doc_dir / {doc_id}.md"""
+        from config import settings
+
+        output_dir = settings.ingestion.parsed_doc_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        md_path = output_dir / f"{ctx.document.doc_id}.md"
+        md_path.write_text(ctx.document.raw_text, encoding="utf-8")
+        return md_path

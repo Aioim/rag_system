@@ -55,6 +55,22 @@ retrieval:
   max_context_tokens: 6000
 
 # --------------------------------------------------------------------------
+# 文档处理（离线 Pipeline）
+# --------------------------------------------------------------------------
+ingestion:
+  parsed_doc_dir: data/parsed_docs   # 解析后 Markdown 输出目录（相对于 PROJECT_ROOT）
+  parsers:                           # 文件扩展名 → 解析器名称映射
+    pdf: docling                     # 可选: pymupdf4llm
+    docx: docling
+    doc: docling
+    pptx: docling
+    ppt: docling
+    html: docling
+    md: direct                       # 直接读取，不经过 docling
+    markdown: direct
+    txt: direct
+
+# --------------------------------------------------------------------------
 # 文档分块
 # --------------------------------------------------------------------------
 chunking:
