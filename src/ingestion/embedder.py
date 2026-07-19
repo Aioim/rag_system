@@ -1,9 +1,16 @@
 """EmbedderStage — 批量 embedding，将向量写回 chunk"""
 
+from __future__ import annotations
+
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 from ingestion.context import PipelineContext
+from models.enums import DocumentStatus
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 class EmbedderStage:
@@ -12,7 +19,7 @@ class EmbedderStage:
     name = "embedder"
     fatal = False
 
-    def __init__(self, embedding_model):
+    def __init__(self, embedding_model: SentenceTransformer):
         self.embedding_model = embedding_model
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
@@ -39,13 +46,14 @@ class EmbedderStage:
             embeddings = await loop.run_in_executor(
                 None, self.embedding_model.encode, texts
             )
-            for c, emb in zip(batch, embeddings):
-                c.embedding = emb.tolist() if hasattr(emb, "tolist") else list(emb)
+            for c, emb in zip(batch, embeddings, strict=True):
+                c.embedding = emb.tolist()
             total_batches += 1
 
         ctx.metadata["embedding_batches"] = total_batches
         ctx.metadata["embedding_duration_ms"] = (
             time.perf_counter() - t0
         ) * 1000
+        ctx.document.status = DocumentStatus.EMBEDDING
 
         return ctx

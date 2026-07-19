@@ -6,7 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import get_finetune_config, FinetuneConfig
+from .aliases import _MODEL_TYPE_ALIASES
+from .config import FinetuneConfig, get_finetune_config
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -65,23 +66,36 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--device", default=None, choices=["auto", "cuda", "cpu"])
 
 
-def _apply_overrides(config: FinetuneConfig, args: argparse.Namespace) -> None:
-    """CLI 参数覆盖配置（CLI > 环境变量 > YAML）"""
+
+
+def _apply_overrides(config: FinetuneConfig, args: argparse.Namespace) -> FinetuneConfig:
+    """CLI 参数覆盖配置（CLI > 环境变量 > YAML），返回新配置对象"""
+    updates: dict = {}
     if args.output_dir:
-        config.output_dir = args.output_dir
+        updates["output_dir"] = args.output_dir
     if args.device:
-        config.device = args.device
+        updates["device"] = args.device
+
+    training_updates: dict = {}
     if args.epochs is not None:
-        config.training.epochs = args.epochs
+        training_updates["epochs"] = args.epochs
     if args.batch_size is not None:
-        config.training.batch_size = args.batch_size
+        training_updates["batch_size"] = args.batch_size
     if args.lr is not None:
-        config.training.learning_rate = args.lr
+        training_updates["learning_rate"] = args.lr
+
+    distill_updates: dict = {}
     if hasattr(args, "alpha") and args.alpha is not None:
-        config.distillation.alpha = args.alpha
+        distill_updates["alpha"] = args.alpha
 
+    if not updates and not training_updates and not distill_updates:
+        return config
 
-from .aliases import _MODEL_TYPE_ALIASES
+    if training_updates:
+        updates["training"] = config.training.model_copy(update=training_updates)
+    if distill_updates:
+        updates["distillation"] = config.distillation.model_copy(update=distill_updates)
+    return config.model_copy(update=updates)
 
 
 def _get_base_model(model_type: str, args) -> str:
@@ -92,9 +106,10 @@ def _get_base_model(model_type: str, args) -> str:
     resolved = _MODEL_TYPE_ALIASES.get(model_type, model_type)
     try:
         from model import models
-        models._ensure_init()
-        return models._defaults.get(resolved, "")
-    except (ImportError, AttributeError, KeyError) as e:
+        model_id = models.get_default_model_id(resolved)
+        if model_id:
+            return model_id
+    except (ImportError, AttributeError) as e:
         import sys
         print(f"警告: 无法从配置获取默认模型: {e}", file=sys.stderr)
     return ""
@@ -120,11 +135,11 @@ def main(argv: list[str] | None = None) -> None:
 def _cmd_train(args) -> None:
     """执行训练命令"""
     from .embedding_trainer import EmbeddingTrainer
-    from .reranker_trainer import RerankerTrainer
     from .llm_trainer import LLMTrainer
+    from .reranker_trainer import RerankerTrainer
 
     config = get_finetune_config()
-    _apply_overrides(config, args)
+    config = _apply_overrides(config, args)
 
     base_model = _get_base_model(args.command, args)
     if not base_model:
@@ -153,7 +168,7 @@ def _cmd_train(args) -> None:
         trainer = trainer_cls(config, base_model)
         output = trainer.run(args.data, output_name=args.name)
 
-    print(f"训练完成!")
+    print("训练完成!")
     print(f"  模型类型: {output.model_type}")
     print(f"  基座模型: {output.base_model}")
     print(f"  适配器路径: {output.adapter_path}")
@@ -165,8 +180,9 @@ def _cmd_train(args) -> None:
 def _cmd_list() -> None:
     """列出所有已微调适配器"""
     from config.path import PROJECT_ROOT
-    from .config import get_finetune_config
+
     from .base import BaseTrainer
+    from .config import get_finetune_config
 
     config = get_finetune_config()
     output_dir = config.resolve_output_dir(PROJECT_ROOT)
@@ -185,9 +201,11 @@ def _cmd_list() -> None:
 def _cmd_remove(name: str) -> None:
     """删除适配器"""
     import shutil
+
     from config.path import PROJECT_ROOT
-    from .config import get_finetune_config
+
     from .base import BaseTrainer
+    from .config import get_finetune_config
 
     config = get_finetune_config()
     output_dir = config.resolve_output_dir(PROJECT_ROOT)
@@ -204,8 +222,9 @@ def _cmd_remove(name: str) -> None:
 def _cmd_info(name: str) -> None:
     """查看适配器详情"""
     from config.path import PROJECT_ROOT
-    from .config import get_finetune_config
+
     from .base import BaseTrainer
+    from .config import get_finetune_config
 
     config = get_finetune_config()
     output_dir = config.resolve_output_dir(PROJECT_ROOT)

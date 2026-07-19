@@ -23,13 +23,12 @@
 
 __version__ = "1.1.0"
 
-from .manager import ModelManager, models
 from .downloader import ModelDownloader
+from .manager import ModelManager, models
 
 __all__ = [
-    # 核心入口
-    "models",
-    "ModelManager",
     "ModelDownloader",
+    "ModelManager",
     "__version__",
+    "models",
 ]

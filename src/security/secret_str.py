@@ -9,15 +9,15 @@
 • 自动清零（del时覆盖内存）
 • 防内存转储（__slots__ 限制属性）
 """
-import importlib
 import contextlib
-secrets_lib = importlib.import_module('secrets')
-from typing import Any, Optional
+import secrets as secrets_lib
+import sys
+from typing import Any
 
 
 class SecretStr:
     """敏感字符串容器 - 多层防泄露保护"""
-    __slots__ = ('_value', '_name', '_accessed')
+    __slots__ = ('_accessed', '_name', '_value')
 
     def __init__(self, value: str, name: str = "secret"):
         if not isinstance(value, str):
@@ -67,11 +67,10 @@ class SecretStr:
         raise TypeError("SecretStr objects are unhashable (security protection)")
 
     def __del__(self):
+        """尝试覆盖内存（Python 无法保证安全擦除，仅尽力而为）"""
         try:
-            if hasattr(self, '_value'):
-                import sys
-                if not sys.is_finalizing():
-                    self._value = '\0' * len(self._value)
+            if hasattr(self, '_value') and not sys.is_finalizing():
+                self._value = '\0' * len(self._value)
         except Exception:
             pass
 

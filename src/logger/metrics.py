@@ -6,7 +6,7 @@ import threading
 class LogMetrics:
     """SRE监控指标"""
     _lock = threading.Lock()
-    _stats = {
+    _stats: dict = {  # noqa: RUF012
         "total_logs": 0, "filtered_logs": 0, "masking_time_ns": 0,
         "handler_errors": 0, "password_leak_attempts": 0,
         "serialization_failures": 0,

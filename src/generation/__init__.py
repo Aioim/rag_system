@@ -1,12 +1,13 @@
 """生成层 — Prompt 组装 / 模型路由 / 生成 / 事实核查 / 引用构建"""
 import threading
+from typing import Any
 
-from logger import logger
-from generation.layer import GenerationLayer
 from generation.citation_builder import CitationBuilder
-from generation.prompt_assembler import PromptAssembler
-from generation.llm_router import LLMRouter
 from generation.fact_checker import FactChecker
+from generation.layer import GenerationLayer
+from generation.llm_router import LLMRouter
+from generation.prompt_assembler import PromptAssembler
+from logger import logger
 
 # 全局单例
 _generation_layer: GenerationLayer | None = None
@@ -14,7 +15,8 @@ _lock = threading.Lock()
 _init_llm_id: int | None = None
 
 
-def get_generation_layer(llm) -> GenerationLayer:
+def get_generation_layer(llm: Any) -> GenerationLayer:
+    # TODO: 替换 Any 为 LLMProtocol，统一 llm 参数类型
     """获取生成层全局单例
 
     首次调用时用传入的 llm 初始化单例。
@@ -24,10 +26,6 @@ def get_generation_layer(llm) -> GenerationLayer:
 
     # 快速路径：已初始化，无锁检查
     if _generation_layer is not None:
-        if id(llm) != _init_llm_id:
-            logger.warning(
-                "get_generation_layer 已初始化，忽略不同的 llm 参数"
-            )
         return _generation_layer
 
     with _lock:
@@ -35,6 +33,10 @@ def get_generation_layer(llm) -> GenerationLayer:
         if _generation_layer is None:
             _generation_layer = GenerationLayer(llm)
             _init_llm_id = id(llm)
+        elif id(llm) != _init_llm_id:
+            logger.warning(
+                "get_generation_layer 已初始化，忽略不同的 llm 参数"
+            )
         return _generation_layer
 
 
@@ -47,11 +49,11 @@ def reset_generation_layer() -> None:
 
 
 __all__ = [
-    "GenerationLayer",
     "CitationBuilder",
-    "PromptAssembler",
-    "LLMRouter",
     "FactChecker",
+    "GenerationLayer",
+    "LLMRouter",
+    "PromptAssembler",
     "get_generation_layer",
     "reset_generation_layer",
 ]

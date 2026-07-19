@@ -4,6 +4,8 @@ import tempfile
 import json
 from pathlib import Path
 
+import pytest
+
 from model import models
 from model.finetune.config import FinetuneConfig
 
@@ -93,3 +95,39 @@ class TestFinetuneAPI:
             assert config.distillation.alpha == 0.3, (
                 f"distillation.alpha 应为 0.3，实际: {config.distillation.alpha}"
             )
+
+    def test_overrides_preserve_yaml_config(self, monkeypatch):
+        """**overrides 应叠加在 YAML 配置之上，而非丢弃 YAML 退回全默认值（复现审查发现）"""
+
+        class _CaptureTrainer:
+            captured_cfg = None
+
+            def __init__(self, cfg, base_model_id, **kwargs):
+                _CaptureTrainer.captured_cfg = cfg
+                raise RuntimeError("stop-before-training")
+
+        yaml_cfg = FinetuneConfig()
+        yaml_cfg.training.epochs = 99  # 模拟 YAML 自定义值（代码默认为 3）
+
+        monkeypatch.setattr(
+            "model.finetune.config.get_finetune_config", lambda: yaml_cfg
+        )
+        monkeypatch.setattr(
+            "model.finetune.embedding_trainer.EmbeddingTrainer", _CaptureTrainer
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            data_path = tmp / "test.jsonl"
+            _make_triplet_jsonl(data_path, count=3)
+
+            with pytest.raises(RuntimeError, match="stop-before-training"):
+                models.finetune("embedding", str(data_path), batch_size=4)
+
+        cfg = _CaptureTrainer.captured_cfg
+        assert cfg is not None
+        assert cfg.training.batch_size == 4, "override 应生效"
+        assert cfg.training.epochs == 99, "YAML 自定义值应保留，而非退回默认值"
+        # 不污染缓存单例：overrides 写入的是深拷贝
+        assert cfg is not yaml_cfg
+        assert yaml_cfg.training.batch_size == 8

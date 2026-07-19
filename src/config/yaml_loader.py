@@ -2,12 +2,14 @@
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any
+
 import yaml
+
 from config.path import PROJECT_ROOT
 
 
-def deep_merge(base: Dict, override: Dict) -> Dict:
+def deep_merge(base: dict, override: dict) -> dict:
     """深度合并两个字典，override 中的值覆盖 base（被 YamlLoader 和 RAGAppConfig 共用）"""
     result = base.copy()
     for key, value in override.items():
@@ -25,9 +27,9 @@ class YamlLoader:
         if config_dir is None:
             config_dir = PROJECT_ROOT / "config"
         self.config_dir = Path(config_dir)
-        self._cache: Dict[str, Tuple[Dict[str, Any], Dict[str, float]]] = {}
+        self._cache: dict[str, tuple[dict[str, Any], dict[str, float]]] = {}
 
-    def load_environment(self, env: str = "dev") -> Dict[str, Any]:
+    def load_environment(self, env: str = "dev") -> dict[str, Any]:
         """
         加载指定环境的 YAML 配置。
         合并策略：defaults.yaml → {env}.yaml（后者覆盖前者）
@@ -52,16 +54,18 @@ class YamlLoader:
         self._cache[env] = (merged, mtime_dict)
         return deepcopy(merged)  # 深拷贝防止外部修改缓存
 
-    def _is_cache_valid(self, mtime_dict: Dict[str, float]) -> bool:
+    def _is_cache_valid(self, mtime_dict: dict[str, float]) -> bool:
         for filename, cached_mtime in mtime_dict.items():
             file_path = self.config_dir / filename
             if not file_path.exists():
-                return False  # 文件被删除，缓存失效
+                if cached_mtime:
+                    return False  # 文件被删除，缓存失效
+                continue  # 缓存时就不存在（mtime=0），仍不存在视为未变化
             if file_path.stat().st_mtime > cached_mtime:
-                return False  # 文件已更新，缓存失效
+                return False  # 文件已更新（或新创建），缓存失效
         return True
 
-    def _load_yaml_with_mtime(self, filename: str) -> Tuple[Dict[str, Any], float]:
+    def _load_yaml_with_mtime(self, filename: str) -> tuple[dict[str, Any], float]:
         file_path = self.config_dir / filename
         if not file_path.exists():
             if filename == "defaults.yaml":
@@ -70,7 +74,7 @@ class YamlLoader:
             return {}, 0.0
 
         mtime = file_path.stat().st_mtime
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
         return config, mtime
 

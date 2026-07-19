@@ -43,4 +43,4 @@ if __name__ == "__main__":
     parsed = r._parse_response(mock_response)
     for i, v in enumerate(parsed, 1):
         print(f"  [{i}] {v}")
-    print(f"\ntemperature = 0.3 (建议在构造 ChatOpenAI 时设置)")
+    print("\ntemperature = 0.3 (建议在构造 ChatOpenAI 时设置)")

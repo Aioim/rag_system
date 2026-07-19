@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from sentence_transformers import CrossEncoder
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import CrossEncoder, SentenceTransformer
 
 from logger import logger
 from models.chunk import Chunk
@@ -83,10 +82,11 @@ class RetrievalLayer:
             logger.error("召回路 [%s] 失败: %s", path, e)
             return []
 
-    async def retrieve(self, ctx: PipelineContext) -> PipelineContext:
+    async def retrieve(self, ctx: PipelineContext, top_k: int | None = None) -> PipelineContext:
         from config import settings
 
         cfg = settings.retrieval
+        effective_top_k = top_k if top_k is not None else cfg.top_k
         loop = asyncio.get_running_loop()
 
         # store 加载（faiss IO）与 BM25 构建/模型加载均为重活，走线程池
@@ -106,7 +106,7 @@ class RetrievalLayer:
 
         # 1. 每条 query 并行两路召回，每路 top_k×2
         queries = ctx.rewritten_queries or [ctx.query]
-        recall_k = cfg.top_k * 2
+        recall_k = effective_top_k * 2
         t0 = time.perf_counter()
         tasks = []
         for q in queries:
@@ -141,8 +141,8 @@ class RetrievalLayer:
         # 3. 上下文扩展（docstore 内存读，无需线程池）
         t1 = time.perf_counter()
         expander = ContextExpander(store)
-        for c in candidates:
-            expander.expand(c, cfg.expansion_window)
+        for i, c in enumerate(candidates):
+            candidates[i] = expander.expand(c, cfg.expansion_window)
         ctx.metadata["retrieval_expand_ms"] = (time.perf_counter() - t1) * 1000
 
         # 4. CrossEncoder 精排（对融合后的标准问法 ctx.query）+ MMR 截断
@@ -154,7 +154,7 @@ class RetrievalLayer:
         vectors = await loop.run_in_executor(
             None, self._reconstruct_vectors, store, reranked
         )
-        ctx.reranked = mmr_select(reranked, vectors, cfg.top_k, cfg.mmr_lambda)
+        ctx.reranked = mmr_select(reranked, vectors, effective_top_k, cfg.mmr_lambda)
         ctx.metadata["retrieval_rerank_ms"] = (time.perf_counter() - t2) * 1000
 
         # 5. Self-RAG 自评

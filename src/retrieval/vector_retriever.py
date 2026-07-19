@@ -6,8 +6,9 @@ import faiss
 import numpy as np
 
 if TYPE_CHECKING:
-    from retrieval.store import FAISSStore
     from sentence_transformers import SentenceTransformer
+
+    from retrieval.store import FAISSStore
 
 _embedding_model: "SentenceTransformer | None" = None
 _model_lock = threading.Lock()

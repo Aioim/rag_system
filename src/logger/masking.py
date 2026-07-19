@@ -12,7 +12,7 @@ class MaskingEngine:
     _SHORT_THRESHOLD = 100
 
     # 脱敏模式库
-    _PATTERNS = {
+    _PATTERNS: dict = {  # noqa: RUF012
         'auth': [
             # JSON 格式字段
             (re.compile(r'(?i)("password"\s*:\s*")[^"]+(")'), r'\1******\2'),
@@ -61,8 +61,7 @@ class MaskingEngine:
         result = text
         for category in MaskingEngine._PATTERNS.values():
             for pattern, repl in category:
-                if pattern.search(result):
-                    result = pattern.sub(repl, result)
+                result, n = pattern.subn(repl, result)
         return result
 
     @staticmethod
@@ -90,8 +89,7 @@ class MaskingEngine:
         result = text
         for category in MaskingEngine._PATTERNS.values():
             for pattern, repl in category:
-                if pattern.search(result):
-                    result = pattern.sub(repl, result)
+                result, n = pattern.subn(repl, result)
         return result
 
 def mask_sensitive_data(message):

@@ -2,6 +2,7 @@
 import asyncio
 
 from logger import logger
+from models.llm import LLMProtocol
 from query.rewriters.base import BaseRewriter
 from query.rewriters.hyde import HyDERewriter
 from query.rewriters.keyword_rewriter import KeywordRewriter
@@ -15,7 +16,7 @@ class QueryRewriter:
     原始 query 始终在返回列表的第一位。
     """
 
-    def __init__(self, llm):
+    def __init__(self, llm: LLMProtocol) -> None:
         self._rewriters: list[BaseRewriter] = [
             HyDERewriter(llm, temperature=0.3),
             KeywordRewriter(llm, temperature=0),
@@ -33,10 +34,14 @@ class QueryRewriter:
         for r in results:
             if isinstance(r, (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)):
                 raise r
-            if isinstance(r, BaseException):
+            # asyncio.gather(return_exceptions=True) 对 Exception 子类返回异常对象，
+            # 对 BaseException 的非 Exception 子类（如 CancelledError）直接传播，
+            # 因此此处 isinstance(r, BaseException) 实际仅匹配 Exception。
+            if isinstance(r, Exception):
                 logger.error("QueryRewriter 子改写器异常: %s", r)
                 continue
             if not isinstance(r, list):
+                logger.warning("QueryRewriter 子改写器返回非 list 类型: %s", type(r).__name__)
                 continue
             for q in r:
                 if q and q not in seen:
@@ -74,7 +79,7 @@ if __name__ == "__main__":
         print("=" * 60)
         print("QueryRewriter 自测")
         print("=" * 60)
-        print(f"  输入: 原始查询")
+        print("  输入: 原始查询")
         print(f"  输出: {result}")
         print(f"  数量: {len(result)} (原始查询 1 + 去重变体 {len(result)-1})")
 

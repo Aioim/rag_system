@@ -1,9 +1,10 @@
 """Ingestion Pipeline 数据模型 — 从 models 导入共享类型，定义 ingestion 专有类型"""
 
 from dataclasses import dataclass, field
+from typing import Any
 
-from models.document import Document  # noqa: F401 — 重导出
-from models.chunk import Chunk  # noqa: F401 — 重导出
+from models.chunk import Chunk
+from models.document import Document
 
 
 @dataclass
@@ -26,4 +27,4 @@ class PipelineContext:
     current_stage: str = ""
     status: str = "pending"             # pending → running → done / failed
     errors: list[StageError] = field(default_factory=list)
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)

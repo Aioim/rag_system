@@ -1,26 +1,28 @@
 """GenerationLayer — 生成层主编排器
 
 流程（设计文档 5.5–5.7）：
-1. INSUFFICIENT → 短路（不调 LLM，写 fallback_level="no_answer"，上层 core/fallback 处理兜底）
-2. NEED_MORE → 标记 fallback_level="partial"，正常生成
+1. INSUFFICIENT → 短路（不调 LLM，写 fallback_level=FallbackLevel.NO_ANSWER，上层 core/fallback 处理兜底）
+2. NEED_MORE → 标记 fallback_level=FallbackLevel.PARTIAL，正常生成
 3. SUFFICIENT → 完整流程：组装 → 路由 → 生成 → 核查 → 引用
 """
 import time
+from typing import Any
 
 from config import settings
+from generation.citation_builder import CitationBuilder
+from generation.fact_checker import FactChecker, FactCheckResult
+from generation.llm_router import LLMRouter
+from generation.prompt_assembler import PromptAssembler
 from logger import logger
 from models.context import PipelineContext
-from models.enums import RetrievalEval
-from generation.prompt_assembler import PromptAssembler
-from generation.llm_router import LLMRouter
-from generation.fact_checker import FactChecker
-from generation.citation_builder import CitationBuilder
+from models.enums import FallbackLevel, RetrievalEval
 
 
 class GenerationLayer:
     """构造时注入 LLM；组件在 __init__ 中创建（无外部依赖即可创建者）"""
 
-    def __init__(self, llm):
+    def __init__(self, llm: Any):
+        # TODO: 替换 Any 为 LLMProtocol，统一 llm 参数类型
         self._llm = llm
         self.assembler = PromptAssembler()
         self.router = LLMRouter()
@@ -36,11 +38,11 @@ class GenerationLayer:
             ctx.sources = []
             ctx.confidence = 0.0
             ctx.is_fallback = True
-            ctx.fallback_level = "no_answer"
+            ctx.fallback_level = FallbackLevel.NO_ANSWER
             return ctx
 
         if ctx.retrieval_eval is RetrievalEval.NEED_MORE:
-            ctx.fallback_level = "partial"
+            ctx.fallback_level = FallbackLevel.PARTIAL
 
         # ---- 2. 上下文组装 --------------------------------------------------
         assembled_context = self.assembler.assemble(
@@ -50,7 +52,11 @@ class GenerationLayer:
         )
 
         # ---- 3. 模型路由 ----------------------------------------------------
-        route = self.router.route(ctx.intent)
+        try:
+            route = self.router.route(ctx.intent)
+        except Exception:
+            logger.warning("LLMRouter 路由/模板加载失败，使用默认模板降级")
+            route = self.router.build_fallback_route()
 
         # ---- 4. 构建 prompt -------------------------------------------------
         prompt = self._build_output_prompt(
@@ -69,7 +75,7 @@ class GenerationLayer:
             raw_answer = ""
 
         # ---- 6. 事实核查 ----------------------------------------------------
-        fact_results: list = []
+        fact_results: list[FactCheckResult] = []
         pass_rate = 1.0
         fact_check_degraded = False
         if (
@@ -109,7 +115,11 @@ class GenerationLayer:
         return ctx
 
     async def _call_llm(self, prompt: str, temperature: float) -> str:
-        """调用 LLM；预留为未来 stream 扩展点"""
+        """调用 LLM；预留为未来 stream 扩展点
+
+        TODO: 当前忽略 route.model_tier/model_name，始终使用 self._llm。
+        多模型路由实现后需按 tier 选择不同 LLM 实例。
+        """
         return (await self._llm.ainvoke(prompt, temperature=temperature)).content
 
     @staticmethod
@@ -121,8 +131,11 @@ class GenerationLayer:
     ) -> str:
         """填充 {context} / {query} 占位符，拼接 system + user"""
         cfg = settings.generation
-        query = query[:cfg.max_query_chars] if query else ""
-        filled = user_template.format(context=context or "（无参考资料）", query=query)
+        truncated_query = query[:cfg.max_query_chars] if query else ""
+        filled = (
+            user_template.replace("{context}", context or "（无参考资料）")
+            .replace("{query}", truncated_query)
+        )
         prompt = system + "\n\n" + filled
         return prompt
 

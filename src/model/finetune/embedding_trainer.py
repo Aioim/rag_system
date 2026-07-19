@@ -3,13 +3,14 @@ Embedding 模型微调 — 基于 sentence-transformers + LoRA
 """
 
 from pathlib import Path
-from typing import Optional
 
 from datasets import Dataset
+from peft import LoraConfig, TaskType, get_peft_model
 from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
 from sentence_transformers.sentence_transformer.losses import MultipleNegativesRankingLoss
-from sentence_transformers.sentence_transformer.training_args import SentenceTransformerTrainingArguments
-from peft import get_peft_model, LoraConfig, TaskType
+from sentence_transformers.sentence_transformer.training_args import (
+    SentenceTransformerTrainingArguments,
+)
 
 from .base import BaseTrainer
 from .config import FinetuneConfig
@@ -28,7 +29,7 @@ class EmbeddingTrainer(BaseTrainer):
     def __init__(self, config: FinetuneConfig, base_model_id: str):
         super().__init__(config, base_model_id)
 
-    def load_data(self, data_path: Path) -> tuple[Dataset, Optional[Dataset]]:
+    def load_data(self, data_path: Path) -> tuple[Dataset, Dataset | None]:
         from .data import split_train_eval
 
         records = load_jsonl(data_path)
@@ -57,7 +58,7 @@ class EmbeddingTrainer(BaseTrainer):
 
         return train_ds, eval_ds
 
-    def train(self, train_dataset: Dataset, eval_dataset: Optional[Dataset] = None) -> Path:
+    def train(self, train_dataset: Dataset, eval_dataset: Dataset | None = None) -> Path:
         # 1. 加载基座模型
         device = self._resolve_device()
         model = SentenceTransformer(self.base_model_id, device=str(device))
@@ -70,9 +71,10 @@ class EmbeddingTrainer(BaseTrainer):
             lora_dropout=self.config.lora.lora_dropout,
             target_modules=self.config.lora.target_modules,
         )
-        model._first_module().auto_model = get_peft_model(
-            model._first_module().auto_model, lora_cfg
-        )
+        # 注: model[0] 返回 SentenceTransformer 的第一个 module，
+        # 等价于 _first_module() 但使用公共 API
+        first_module = model[0]
+        first_module.auto_model = get_peft_model(first_module.auto_model, lora_cfg)
 
         # 3. 损失函数
         loss = MultipleNegativesRankingLoss(model)

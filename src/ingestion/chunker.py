@@ -1,29 +1,46 @@
 """ChunkerStage — 语义/固定/层级 三种分块策略"""
 
+from __future__ import annotations
+
+import asyncio
 import re
 import uuid
+from abc import ABC, abstractmethod
+from dataclasses import replace
+from typing import TYPE_CHECKING
+
+import numpy as np
 
 from ingestion.context import Chunk, PipelineContext, StageError
+from models.enums import DocumentStatus
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 # ============================================================================
 # Splitter 基类
 # ============================================================================
 
-class _BaseSplitter:
-    """Splitter 基类：提供双向链表构建、token 估算等共用逻辑"""
+class _BaseSplitter(ABC):
+    """Splitter 基类：提供双向链表构建、字符数估算等共用逻辑"""
+
+    @abstractmethod
+    def split(self, text: str) -> list[Chunk]:
+        """将文本切分为 Chunk 列表"""
+        ...
 
     def _estimate_tokens(self, text: str) -> int:
-        """中文字数估算 token 数（1 字 ≈ 1 token）"""
+        """字符数估算 token 数（1 中文字符 ≈ 1 token 的简化近似，实际返回 len(text)）"""
         return len(text)
 
-    def _build_chunks(self, texts: list[str], doc_id: str = "") -> list[Chunk]:
+    def _build_chunks(self, texts: list[str]) -> list[Chunk]:
         """为文本列表生成 Chunk，自动建立双向链表"""
         chunks = []
         for i, text in enumerate(texts):
             chunk = Chunk(
                 chunk_id=str(uuid.uuid4()),
-                doc_id=doc_id,
+                doc_id="",
                 text=text,
                 chunk_index=i,
             )
@@ -46,10 +63,14 @@ class FixedChunker(_BaseSplitter):
     """固定大小分块，相邻 chunk 有 overlap 重叠"""
 
     def __init__(self, chunk_size: int = 512, overlap: int = 64):
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size 必须 > 0，收到: {chunk_size}")
+        if overlap < 0:
+            raise ValueError(f"overlap 不能为负数，收到: {overlap}")
         self.chunk_size = chunk_size
-        self.overlap = overlap
+        self.overlap = min(overlap, chunk_size - 1) if chunk_size > 1 else 0
 
-    def splitter(self, text: str) -> list[Chunk]:
+    def split(self, text: str) -> list[Chunk]:
         if not text.strip():
             return []
 
@@ -74,18 +95,24 @@ class HierarchicalChunker(_BaseSplitter):
     """按 Markdown 标题层级分块，保留 heading_path 到 metadata"""
 
     def __init__(self, chunk_size: int = 512, overlap: int = 64):
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size 必须 > 0，收到: {chunk_size}")
+        if overlap < 0:
+            raise ValueError(f"overlap 不能为负数，收到: {overlap}")
         self.chunk_size = chunk_size
-        self.overlap = overlap
+        self.overlap = min(overlap, chunk_size - 1) if chunk_size > 1 else 0
 
-    def splitter(self, text: str) -> list[Chunk]:
+    def split(self, text: str) -> list[Chunk]:
         if not text.strip():
             return []
 
         sections = re.split(r"(?=^#{1,3}\s?)", text, flags=re.MULTILINE)
 
-        heading_stack = []
+        heading_stack: list[str] = []
         text_segments = []
         heading_paths = []
+        # 标记 segment 是否为滑窗切分的非首窗（其开头已与前一 segment 重叠）
+        has_window_overlap: list[bool] = []
 
         for section in sections:
             if not section.strip():
@@ -108,21 +135,26 @@ class HierarchicalChunker(_BaseSplitter):
                     if seg.strip():
                         text_segments.append(seg)
                         heading_paths.append(heading_path)
+                        has_window_overlap.append(i > 0)
             else:
                 text_segments.append(content)
                 heading_paths.append(heading_path)
+                has_window_overlap.append(False)
 
         chunks = self._build_chunks(text_segments)
-        for c, hp in zip(chunks, heading_paths):
-            c.metadata["heading_path"] = hp
+        for c, hp in zip(chunks, heading_paths, strict=True):
+            c.metadata = {**c.metadata, "heading_path": hp}
 
-        # 短章节间添加 overlap，保持上下文连续性
+        # 短章节间添加 overlap，保持上下文连续性；
+        # 滑窗切分的非首窗已含与前块的重叠，跳过以免双重 overlap 导致文本重复
         if self.overlap > 0 and len(chunks) > 1:
             # 先保存各 chunk 原始尾部，避免原地修改导致链式偏移
             original_tails = [c.text[-self.overlap:] for c in chunks[:-1]]
             for i in range(1, len(chunks)):
+                if has_window_overlap[i]:
+                    continue
                 if original_tails[i - 1]:
-                    chunks[i].text = original_tails[i - 1] + chunks[i].text
+                    chunks[i] = replace(chunks[i], text=original_tails[i - 1] + chunks[i].text)
 
         return chunks
 
@@ -136,7 +168,7 @@ class SemanticChunker(_BaseSplitter):
 
     def __init__(
         self,
-        embedding_model,
+        embedding_model: SentenceTransformer,
         chunk_size: int = 512,
         overlap: int = 64,
         threshold_percentile: float = 0.9,
@@ -148,7 +180,7 @@ class SemanticChunker(_BaseSplitter):
         self.threshold_percentile = threshold_percentile
         self.buffer_size = buffer_size
 
-    def splitter(self, text: str) -> list[Chunk]:
+    def split(self, text: str) -> list[Chunk]:
         if not text.strip():
             return []
 
@@ -161,8 +193,6 @@ class SemanticChunker(_BaseSplitter):
         embeddings = self.embedding_model.encode(sentences)
 
         # 3. 计算相邻句子余弦相似度
-        import numpy as np
-
         similarities = []
         for i in range(len(embeddings) - 1):
             sim = np.dot(embeddings[i], embeddings[i + 1]) / (
@@ -205,7 +235,7 @@ class SemanticChunker(_BaseSplitter):
             for i in range(1, len(chunks)):
                 prev_end = chunks[i - 1].text[-self.overlap:]
                 if prev_end:
-                    chunks[i].text = prev_end + chunks[i].text
+                    chunks[i] = replace(chunks[i], text=prev_end + chunks[i].text)
 
         return chunks
 
@@ -255,7 +285,7 @@ class ChunkerStage:
     name = "chunker"
     fatal = False
 
-    def __init__(self, embedding_model=None):
+    def __init__(self, embedding_model: SentenceTransformer | None = None):
         self.embedding_model = embedding_model
 
     async def run(self, ctx: PipelineContext) -> PipelineContext:
@@ -271,6 +301,7 @@ class ChunkerStage:
         cfg = settings.chunking
         strategy = cfg.strategy
 
+        splitter: _BaseSplitter
         if strategy == "semantic":
             if self.embedding_model is None:
                 ctx.errors.append(
@@ -310,13 +341,17 @@ class ChunkerStage:
             )
             return ctx
 
-        chunks = splitter.splitter(raw_text)
+        # split 为 CPU 密集操作（semantic 策略含 embedding encode），
+        # 放入线程池执行避免阻塞事件循环
+        loop = asyncio.get_running_loop()
+        chunks = await loop.run_in_executor(None, splitter.split, raw_text)
 
         for c in chunks:
             c.doc_id = ctx.document.doc_id
-            c.metadata["doc_title"] = ctx.document.title
+            c.metadata = {**c.metadata, "doc_title": ctx.document.title}
 
         ctx.chunks = chunks
+        ctx.document.status = DocumentStatus.CHUNKING
 
         if not chunks:
             ctx.errors.append(

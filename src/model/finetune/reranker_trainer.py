@@ -3,17 +3,19 @@ Reranker 模型微调 — CrossEncoder + LoRA 二分类微调
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
-import torch
+if TYPE_CHECKING:
+    from transformers import AutoTokenizer as AutoTokenizerType
+
 from datasets import Dataset
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
-    AutoTokenizer,
     AutoModelForSequenceClassification,
+    AutoTokenizer,
     Trainer,
     TrainingArguments,
 )
-from peft import get_peft_model, LoraConfig, TaskType
 
 from .base import BaseTrainer
 from .config import FinetuneConfig
@@ -31,9 +33,9 @@ class RerankerTrainer(BaseTrainer):
 
     def __init__(self, config: FinetuneConfig, base_model_id: str):
         super().__init__(config, base_model_id)
-        self._tokenizer = None  # 延迟加载
+        self._tokenizer: AutoTokenizerType | None = None  # 延迟加载
 
-    def load_data(self, data_path: Path) -> tuple[Dataset, Optional[Dataset]]:
+    def load_data(self, data_path: Path) -> tuple[Dataset, Dataset | None]:
         from .data import split_train_eval
 
         records = load_jsonl(data_path)
@@ -64,10 +66,10 @@ class RerankerTrainer(BaseTrainer):
         tokenized["labels"] = examples["label"]
         return tokenized
 
-    def train(self, train_dataset: Dataset, eval_dataset: Optional[Dataset] = None) -> Path:
+    def train(self, train_dataset: Dataset, eval_dataset: Dataset | None = None) -> Path:
         # 1. 加载 tokenizer 和模型
         device = self._resolve_device()
-        self._tokenizer = AutoTokenizer.from_pretrained(self.base_model_id)
+        self._tokenizer = AutoTokenizer.from_pretrained(self.base_model_id, trust_remote_code=True)
 
         model = AutoModelForSequenceClassification.from_pretrained(
             self.base_model_id, num_labels=2

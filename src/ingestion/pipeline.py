@@ -1,19 +1,20 @@
 """IngestionPipeline — Stage 编排器"""
 
 import asyncio
+import hashlib
 import time
-import uuid
 from pathlib import Path
 from typing import Protocol
 
-from ingestion.context import Document, PipelineContext, StageError
+from ingestion.context import Chunk, Document, PipelineContext, StageError
+from ingestion.stage import Stage
 from logger import logger
 
 
 class IndexWriter(Protocol):
     """FAISSIndexWriter 协议（避免循环依赖，在 indexer.py 中实现）"""
 
-    def write(self, chunks: list, collection: str) -> None: ...
+    def write(self, chunks: list[Chunk], collection: str) -> None: ...
 
 
 class IngestionPipeline:
@@ -22,16 +23,20 @@ class IngestionPipeline:
     依次执行 stages，记录耗时和状态，最后调用 index_writer 持久化。
     """
 
-    def __init__(self, stages: list, index_writer: IndexWriter):
+    def __init__(self, stages: list[Stage], index_writer: IndexWriter):
         self.stages = stages
         self.index_writer = index_writer
 
     async def run(
         self, file_path: Path, collection: str = "default"
     ) -> PipelineContext:
-        # 1. 构造 Document
+        # 1. 构造 Document（doc_id 由文件绝对路径哈希确定性生成：
+        #    同一文件重复入库得到相同 doc_id，indexer 才能识别并替换旧向量）
+        doc_id = hashlib.sha256(
+            str(file_path.resolve()).encode("utf-8")
+        ).hexdigest()[:32]
         doc = Document(
-            doc_id=str(uuid.uuid4()),
+            doc_id=doc_id,
             source_path=file_path,
             file_type=file_path.suffix.lstrip(".").lower(),
             title=file_path.stem,

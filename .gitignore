@@ -22,7 +22,7 @@ environments/.secret_key
 *.pem
 
 # ===== 模型文件 =====
-models/
+local_models/
 
 # ===== 运行时数据 =====
 data/

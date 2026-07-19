@@ -4,15 +4,13 @@
 
 import os
 import time
-import json
-import yaml
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import torch
+import yaml
 
 
 @dataclass
@@ -57,7 +55,7 @@ class BaseTrainer(ABC):
         from .config import FinetuneConfig
         self.config: FinetuneConfig = config
         self.base_model_id = base_model_id
-        self._output_name: Optional[str] = None
+        self._output_name: str | None = None
         self._start_time: float = 0.0
         self._metrics: dict = {}
 
@@ -75,9 +73,19 @@ class BaseTrainer(ABC):
 
     # ---- 模板方法 ----
 
-    def run(self, data_path: Path, output_name: Optional[str] = None) -> FinetuneResult:
+    @staticmethod
+    def _validate_output_name(name: str) -> str:
+        """校验 output_name 不含路径穿越字符"""
+        import re
+        if not re.match(r'^[\w\-]+$', name):
+            raise ValueError(f"output_name 包含非法字符: {name!r}，仅允许字母、数字、下划线、连字符")
+        return name
+
+    def run(self, data_path: Path, output_name: str | None = None) -> FinetuneResult:
         """完整训练流程：验证 → 加载 → 训练 → 保存元数据 → 返回结果"""
-        self._output_name = output_name or self._generate_default_name()
+        self._output_name = self._validate_output_name(
+            output_name or self._generate_default_name()
+        )
         self._start_time = time.time()
 
         # 1. 数据校验
@@ -107,12 +115,12 @@ class BaseTrainer(ABC):
 
     def _generate_default_name(self) -> str:
         """生成默认适配器名称: {model_type}_{YYYYMMDD_HHMMSS}"""
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         return f"{self.model_type}_{timestamp}"
 
     def _validate_data(self, data_path: Path) -> None:
         """使用 data.py 中的校验器检查数据格式"""
-        from .data import load_jsonl, VALIDATORS
+        from .data import VALIDATORS, load_jsonl
 
         if self.model_type not in VALIDATORS:
             raise ValueError(f"不支持的模型类型: {self.model_type}")
@@ -142,7 +150,7 @@ class BaseTrainer(ABC):
             "model_type": result.model_type,
             "base_model": result.base_model,
             "output_name": result.output_name,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "metrics": result.metrics,
             "training_config": {
                 "epochs": self.config.training.epochs,
@@ -159,7 +167,7 @@ class BaseTrainer(ABC):
             with open(tmp_path, "w", encoding="utf-8") as f:
                 yaml.dump(meta, f, allow_unicode=True, default_flow_style=False)
             os.replace(tmp_path, meta_path)
-        except Exception:
+        except (OSError, yaml.YAMLError):
             if tmp_path.exists():
                 tmp_path.unlink()
             raise
@@ -167,13 +175,13 @@ class BaseTrainer(ABC):
     # ---- 静态工具方法（供 ModelManager 使用） ----
 
     @staticmethod
-    def load_metadata(adapter_dir: Path) -> Optional[dict]:
+    def load_metadata(adapter_dir: Path) -> dict | None:
         """读取适配器目录中的 metadata.yaml"""
         meta_path = adapter_dir / "metadata.yaml"
         if not meta_path.exists():
             return None
         try:
-            with open(meta_path, "r", encoding="utf-8") as f:
+            with open(meta_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
         except (yaml.YAMLError, OSError) as e:
             from logger import logger

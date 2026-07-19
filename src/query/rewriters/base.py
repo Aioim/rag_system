@@ -1,5 +1,6 @@
 """查询改写器基类 — 提供模板方法消除子类重复代码"""
 from logger import logger
+from models.llm import LLMProtocol
 
 
 class BaseRewriter:
@@ -8,10 +9,10 @@ class BaseRewriter:
     提供模板方法 rewrite()：调用 _build_prompt → LLM.ainvoke → _parse_response。
     子类只需覆写 _build_prompt()，可选覆写 _parse_response()。
     也可直接覆写 rewrite() 完全自定义行为。
-    LLM 通过构造函数注入，需提供 async ainvoke(prompt, **kwargs) 方法，返回对象需有 .content 属性。
+    LLM 通过构造函数注入，需满足 LLMProtocol。
     """
 
-    def __init__(self, llm=None, temperature: float | None = None):
+    def __init__(self, llm: LLMProtocol | None = None, temperature: float | None = None) -> None:
         self._llm = llm
         self._temperature = temperature
 
@@ -23,13 +24,15 @@ class BaseRewriter:
             )
         prompt = self._build_prompt(query)
         try:
-            kwargs = {}
+            kwargs: dict[str, float] = {}
             if self._temperature is not None:
                 kwargs["temperature"] = self._temperature
             response = await self._llm.ainvoke(prompt, **kwargs)
             return self._parse_response(response.content)
         except Exception:
-            logger.warning("%s LLM 调用失败，返回空列表", type(self).__name__)
+            logger.warning(
+                "%s LLM 调用失败，返回空列表", type(self).__name__, exc_info=True
+            )
             return []
 
     def _build_prompt(self, query: str) -> str:

@@ -1,4 +1,5 @@
 """QueryUnderstandingLayer 测试"""
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -122,3 +123,29 @@ class TestQueryUnderstandingLayerProcess:
         ctx = await layer.process("原始查询")
         # 原始查询（经过别名映射后）在第一位
         assert len(ctx.rewritten_queries) >= 1
+
+
+class TestSessionAccessOffEventLoop:
+    """审查 H7：同步 SQLite 会话读取不应在事件循环线程中执行"""
+
+    @pytest.mark.asyncio
+    async def test_session_get_runs_off_event_loop(self):
+        # Arrange
+        loop_thread = threading.current_thread()
+        seen_threads: list[threading.Thread] = []
+
+        class RecordingSM:
+            def get(self, sid):
+                seen_threads.append(threading.current_thread())
+                return None
+
+        layer = QueryUnderstandingLayer(LayerMockLLM(), RecordingSM())
+
+        # Act
+        await layer.process("什么是RAG？", session_id="s1")
+
+        # Assert
+        assert seen_threads, "session_manager.get 应被调用"
+        assert all(t is not loop_thread for t in seen_threads), (
+            "SQLite 会话读取应通过 to_thread 移出事件循环线程"
+        )

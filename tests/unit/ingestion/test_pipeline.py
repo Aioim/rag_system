@@ -134,3 +134,35 @@ class TestIngestionPipeline:
         assert ctx.document.title == "年度报告"
         assert ctx.document.collection == "tech"
         assert ctx.document.source_path == Path("/data/年度报告.docx")
+
+
+class TestDeterministicDocId:
+    """审查 H11：doc_id 必须可确定性重建，否则 indexer 同 doc 替换逻辑永不生效"""
+
+    @pytest.mark.asyncio
+    async def test_same_file_yields_same_doc_id(self):
+        """同一文件重复入库应得到相同 doc_id"""
+        mock_writer = MagicMock()
+        pipeline = IngestionPipeline(
+            stages=[FakeSuccessStage()],
+            index_writer=mock_writer,
+        )
+
+        ctx1 = await pipeline.run(Path("/tmp/dup.md"))
+        ctx2 = await pipeline.run(Path("/tmp/dup.md"))
+
+        assert ctx1.document.doc_id == ctx2.document.doc_id
+
+    @pytest.mark.asyncio
+    async def test_different_files_yield_different_doc_ids(self):
+        """不同文件应得到不同 doc_id"""
+        mock_writer = MagicMock()
+        pipeline = IngestionPipeline(
+            stages=[FakeSuccessStage()],
+            index_writer=mock_writer,
+        )
+
+        ctx1 = await pipeline.run(Path("/tmp/a.md"))
+        ctx2 = await pipeline.run(Path("/tmp/b.md"))
+
+        assert ctx1.document.doc_id != ctx2.document.doc_id

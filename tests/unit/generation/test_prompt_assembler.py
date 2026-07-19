@@ -49,6 +49,50 @@ class TestDedup:
         assert PromptAssembler.dedup([], threshold=0.85) == []
 
 
+class TestDedupExpandedWindows:
+    """审查 H13：ContextExpander 扩展后的窗口文本重叠须被去重
+    （chunk.embedding 仍是原始向量，余弦相似度无法反映扩展后的重叠）"""
+
+    def test_drops_hit_whose_content_covered_by_kept_window(self):
+        """相邻命中：c3 的正文已包含在 c2 的扩展窗口中，应被丢弃"""
+        a = make_chunk(
+            "c2", "t1\nt2\nt3", 0.9, embedding=[1.0, 0.0],
+            metadata={"window_chunk_ids": ["c1", "c2", "c3"]},
+        )
+        b = make_chunk(
+            "c3", "t2\nt3\nt4", 0.8, embedding=[0.0, 1.0],  # 原始向量正交
+            metadata={"window_chunk_ids": ["c2", "c3", "c4"]},
+        )
+
+        kept = PromptAssembler.dedup([a, b], threshold=0.85)
+
+        assert [c.chunk_id for c in kept] == ["c2"]
+
+    def test_keeps_hit_not_covered_by_any_kept_window(self):
+        """窗口无重叠的命中应保留"""
+        a = make_chunk(
+            "c2", "t1\nt2\nt3", 0.9, embedding=[1.0, 0.0],
+            metadata={"window_chunk_ids": ["c1", "c2", "c3"]},
+        )
+        b = make_chunk(
+            "c9", "t8\nt9\nt10", 0.8, embedding=[0.0, 1.0],
+            metadata={"window_chunk_ids": ["c8", "c9", "c10"]},
+        )
+
+        kept = PromptAssembler.dedup([a, b], threshold=0.85)
+
+        assert [c.chunk_id for c in kept] == ["c2", "c9"]
+
+    def test_duplicate_same_chunk_id_dropped(self):
+        """同一 chunk_id 出现两次时只保留一次"""
+        a = make_chunk("c1", "文本", 0.9, embedding=[1.0, 0.0])
+        b = make_chunk("c1", "文本", 0.5, embedding=[0.0, 1.0])
+
+        kept = PromptAssembler.dedup([a, b], threshold=0.85)
+
+        assert len(kept) == 1
+
+
 class TestAllocateBudget:
     def test_stops_when_budget_exhausted(self):
         chunks = [

@@ -3,12 +3,10 @@
 import logging
 import threading
 from pathlib import Path
-from typing import Optional
 
 from config import settings
-from .formatters import SecurityFormatter
 
-LogConfig = settings.log
+from .formatters import SecurityFormatter
 
 _initialized_dirs: set = set()
 _dir_lock = threading.Lock()
@@ -18,9 +16,9 @@ class HandlerFactory:
     """日志处理器工厂"""
 
     @classmethod
-    def _ensure_log_dir(cls, target_dir: Optional[Path] = None) -> Path:
+    def _ensure_log_dir(cls, target_dir: Path | None = None) -> Path:
         """确保日志目录存在"""
-        log_dir = (target_dir or LogConfig.log_dir).resolve()
+        log_dir = (target_dir or settings.log.log_dir).resolve()
         with _dir_lock:
             if log_dir in _initialized_dirs:
                 return log_dir
@@ -34,8 +32,8 @@ class HandlerFactory:
             handler_type: str,
             filename: str,
             level: int,
-            fmt: str = None,
-            datefmt: str = None,
+            fmt: str | None = None,
+            datefmt: str | None = None,
             **kwargs
     ) -> logging.Handler:
         """创建日志处理器"""
@@ -54,7 +52,7 @@ class HandlerFactory:
                 filename=str(log_dir / filename),
                 when=kwargs.get("when", "midnight"),
                 interval=kwargs.get("interval", 1),
-                backupCount=LogConfig.backup_count,
+                backupCount=settings.log.backup_count,
                 encoding="utf-8",
                 delay=False
             )
@@ -62,7 +60,7 @@ class HandlerFactory:
             from logging.handlers import RotatingFileHandler
             handler = RotatingFileHandler(
                 filename=str(log_dir / filename),
-                maxBytes=kwargs.get("maxBytes", LogConfig.max_bytes),
+                maxBytes=kwargs.get("maxBytes", settings.log.max_bytes),
                 backupCount=kwargs.get("backupCount", 5),
                 encoding="utf-8",
                 delay=False

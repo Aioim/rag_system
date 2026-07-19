@@ -2,18 +2,20 @@
 
 相邻命中窗口重叠导致的重复文本由 generation 组装层去重，本模块不处理。
 """
+import dataclasses
+
 from models.chunk import Chunk
 from retrieval.store import FAISSStore
 
 
 class ContextExpander:
-    def __init__(self, store: FAISSStore):
+    def __init__(self, store: FAISSStore) -> None:
         self._store = store
 
-    def expand(self, chunk: Chunk, window: int) -> None:
-        """向左右各拉 window 个邻居，按 chunk_index 顺序拼接写回 chunk.text（原地修改）"""
+    def expand(self, chunk: Chunk, window: int) -> Chunk:
+        """向左右各拉 window 个邻居，按 chunk_index 顺序拼接，返回新 Chunk"""
         if chunk.metadata.get("expansion_window") == window:
-            return  # 已以相同窗口大小扩展过，幂等返回
+            return chunk  # 已以相同窗口大小扩展过，幂等返回
 
         before: list[Chunk] = []
         cur = chunk
@@ -38,6 +40,12 @@ class ContextExpander:
             cur = nxt
 
         window_chunks = [*before, chunk, *after]
-        chunk.metadata["window_chunk_ids"] = [c.chunk_id for c in window_chunks]
-        chunk.metadata["expansion_window"] = window
-        chunk.text = "\n".join(c.text for c in window_chunks)
+        return dataclasses.replace(
+            chunk,
+            text="\n".join(c.text for c in window_chunks),
+            metadata={
+                **chunk.metadata,
+                "window_chunk_ids": [c.chunk_id for c in window_chunks],
+                "expansion_window": window,
+            },
+        )

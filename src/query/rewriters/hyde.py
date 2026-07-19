@@ -30,4 +30,4 @@ if __name__ == "__main__":
     print("HyDERewriter 自测 — Prompt 预览")
     print("=" * 60)
     print(r._build_prompt("什么是零拷贝技术？"))
-    print(f"\ntemperature = 0.3 (建议在构造 ChatOpenAI 时设置)")
+    print("\ntemperature = 0.3 (建议在构造 ChatOpenAI 时设置)")

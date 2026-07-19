@@ -1,6 +1,10 @@
 """多轮上下文融合 — 指代消解 + 追问补全"""
+from collections.abc import Sequence
+
 from config import settings
 from logger import logger
+from models.llm import LLMProtocol
+from models.session import Message, Session
 
 
 class ContextFuser:
@@ -9,13 +13,16 @@ class ContextFuser:
     session 对象由调用方（QueryUnderstandingLayer）从 SessionManager 获取后传入。
     """
 
-    def __init__(self, llm, session_manager=None, temperature: float = 0):
-        """session_manager 参数已弃用（仅保留以兼容旧调用），不再被内部使用"""
+    def __init__(self, llm: LLMProtocol, temperature: float = 0) -> None:
         self._llm = llm
         self._temperature = temperature
-        self._max_history_msgs = settings.session.max_history_rounds * 2
 
-    async def fuse(self, query: str, session) -> str:
+    @property
+    def _max_history_msgs(self) -> int:
+        """动态读取 settings，支持热重载"""
+        return settings.session.max_history_rounds * 2
+
+    async def fuse(self, query: str, session: Session | None) -> str:
         if session is None or not session.messages:
             return query
 
@@ -24,14 +31,16 @@ class ContextFuser:
         try:
             response = (await self._llm.ainvoke(prompt, temperature=self._temperature)).content
             result = response.strip()
-            return result if result else query
+            return result if result != "" else query
         except Exception:
-            logger.warning("ContextFuser LLM 调用失败，返回原始 query")
+            logger.warning("ContextFuser LLM 调用失败，返回原始 query", exc_info=True)
             return query
 
-    def _format_history(self, messages) -> str:
+    def _format_history(self, messages: Sequence[Message]) -> str:
+        if not messages:
+            return ""
         max_msgs = self._max_history_msgs
-        lines = []
+        lines: list[str] = []
         if max_msgs <= 0:
             return ""
         for msg in messages[-max_msgs:]:
@@ -44,7 +53,8 @@ class ContextFuser:
             lines.append(f"{role}：{msg.content}")
         return "\n".join(lines)
 
-    def _build_prompt(self, history: str, query: str) -> str:
+    @staticmethod
+    def _build_prompt(history: str, query: str) -> str:
         return (
             "你是一个对话上下文理解助手。根据对话历史，判断用户当前问题是否包含"
             "指代词或省略信息。如果包含，请补全为独立完整的提问；如果不包含，"
@@ -101,7 +111,7 @@ if __name__ == "__main__":
 
 
     async def main():
-        fuser = ContextFuser(_MockLLM(), _MockSM())
+        fuser = ContextFuser(_MockLLM(), temperature=0)
         print("=" * 60)
         print("ContextFuser 自测")
         print("=" * 60)

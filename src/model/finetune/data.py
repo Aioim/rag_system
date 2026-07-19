@@ -4,13 +4,12 @@
 
 import json
 from pathlib import Path
-from typing import Optional
 
 
 class DataValidationError(ValueError):
     """训练数据格式校验失败"""
 
-    def __init__(self, message: str, line_number: Optional[int] = None):
+    def __init__(self, message: str, line_number: int | None = None):
         loc = f" (第 {line_number} 行)" if line_number is not None else ""
         super().__init__(f"数据格式错误{loc}: {message}")
 
@@ -23,7 +22,7 @@ def load_jsonl(path: Path) -> list[dict]:
         raise DataValidationError(f"文件格式必须为 .jsonl，实际为: {path.suffix}")
 
     records = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line_no, line in enumerate(f, start=1):
             stripped = line.strip()
             if not stripped:
@@ -31,7 +30,7 @@ def load_jsonl(path: Path) -> list[dict]:
             try:
                 record = json.loads(stripped)
             except json.JSONDecodeError as e:
-                raise DataValidationError(f"JSON 解析失败: {e}", line_no)
+                raise DataValidationError(f"JSON 解析失败: {e}", line_no) from e
             records.append(record)
 
     if not records:

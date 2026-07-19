@@ -2,7 +2,7 @@
 import pytest
 
 from generation.layer import GenerationLayer
-from models.enums import Intent, RetrievalEval
+from models.enums import FallbackLevel, Intent, RetrievalEval
 
 from .conftest import MockLLM, make_chunk
 
@@ -42,7 +42,7 @@ class TestNeedMore:
         result = await layer.generate(sample_ctx)
 
         assert result.answer == "部分回答"
-        assert result.fallback_level == "partial"
+        assert result.fallback_level == FallbackLevel.PARTIAL
         assert not result.is_fallback
 
 
@@ -56,7 +56,7 @@ class TestInsufficient:
 
         assert result.answer == ""
         assert result.is_fallback is True
-        assert result.fallback_level == "no_answer"
+        assert result.fallback_level == FallbackLevel.NO_ANSWER
         assert result.sources == []
         assert result.confidence == 0.0
         assert llm.calls == []

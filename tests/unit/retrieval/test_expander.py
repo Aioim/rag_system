@@ -35,34 +35,42 @@ class TestContextExpander:
         store = FakeStore(CHAIN)
         c = store.get_chunk("c1")
         result = ContextExpander(store).expand(c, window=1)
-        assert result is None  # 纯副作用函数：原地修改 chunk，无返回值
-        assert c.text == "t0\nt1\nt2"
-        assert c.metadata["window_chunk_ids"] == ["c0", "c1", "c2"]
+        # 返回新 Chunk（不可变），原始 chunk 不变
+        assert result is not None
+        assert result.text == "t0\nt1\nt2"
+        assert result.metadata["window_chunk_ids"] == ["c0", "c1", "c2"]
+        # 原始 chunk 未被修改
+        assert c.text == "t1"
+        assert "window_chunk_ids" not in c.metadata
 
     def test_window_2(self):
         store = FakeStore(CHAIN)
         c = store.get_chunk("c2")
-        ContextExpander(store).expand(c, window=2)
-        assert c.text == "t0\nt1\nt2\nt3"
+        result = ContextExpander(store).expand(c, window=2)
+        assert result.text == "t0\nt1\nt2\nt3"
+        assert c.text == "t2"  # 原始 chunk 不变
 
     def test_doc_boundary_head(self):
         store = FakeStore(CHAIN)
         c = store.get_chunk("c0")
-        ContextExpander(store).expand(c, window=1)
-        assert c.text == "t0\nt1"
-        assert c.metadata["window_chunk_ids"] == ["c0", "c1"]
+        result = ContextExpander(store).expand(c, window=1)
+        assert result.text == "t0\nt1"
+        assert result.metadata["window_chunk_ids"] == ["c0", "c1"]
+        assert c.text == "t0"  # 原始 chunk 不变
 
     def test_missing_neighbor_skipped(self):
         broken = _chunk(9, next_id="ghost")
         store = FakeStore([broken])
         c = store.get_chunk("c9")
-        ContextExpander(store).expand(c, window=1)
-        assert c.text == "t9"
-        assert c.metadata["window_chunk_ids"] == ["c9"]
+        result = ContextExpander(store).expand(c, window=1)
+        assert result.text == "t9"
+        assert result.metadata["window_chunk_ids"] == ["c9"]
+        assert c.text == "t9"  # 原始 chunk 不变
 
     def test_window_0_noop_text(self):
         store = FakeStore(CHAIN)
         c = store.get_chunk("c1")
-        ContextExpander(store).expand(c, window=0)
-        assert c.text == "t1"
-        assert c.metadata["window_chunk_ids"] == ["c1"]
+        result = ContextExpander(store).expand(c, window=0)
+        assert result.text == "t1"
+        assert result.metadata["window_chunk_ids"] == ["c1"]
+        assert c.text == "t1"  # 原始 chunk 不变

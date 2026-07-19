@@ -4,23 +4,30 @@ LLM 微调 & 蒸馏 — SFT 微调 + 云端大模型黑盒蒸馏
 
 import json
 import os
+import time
+import warnings
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
+
+from logger import logger
+
+if TYPE_CHECKING:
+    from transformers import AutoTokenizer as AutoTokenizerType
 
 import torch
 from datasets import Dataset
+from peft import LoraConfig, TaskType, get_peft_model
 from transformers import (
-    AutoTokenizer,
     AutoModelForCausalLM,
+    AutoTokenizer,
+    DataCollatorForSeq2Seq,
     Trainer,
     TrainingArguments,
-    DataCollatorForSeq2Seq,
 )
-from peft import get_peft_model, LoraConfig, TaskType
 
 from .base import BaseTrainer
 from .config import FinetuneConfig
-from .data import load_jsonl, validate_llm_data, split_train_eval, DataValidationError
+from .data import DataValidationError, load_jsonl, split_train_eval, validate_llm_data
 
 
 class DistillationTrainer(Trainer):
@@ -31,8 +38,8 @@ class DistillationTrainer(Trainer):
         self.alpha = alpha
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        teacher_labels = inputs.pop("teacher_labels", None)
-        labels = inputs.pop("labels", None)
+        teacher_labels = inputs.get("teacher_labels")
+        labels = inputs.get("labels")
 
         outputs = model(**inputs)
         logits = outputs.logits
@@ -41,11 +48,16 @@ class DistillationTrainer(Trainer):
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
 
-        loss_fct = torch.nn.CrossEntropyLoss()
+        # 与 transformers 约定一致：提供 num_items_in_batch 时用 sum/num_items
+        # 归一化（梯度累积下正确），否则退回 token 平均（mean）
+        reduction = "sum" if num_items_in_batch is not None else "mean"
+        loss_fct = torch.nn.CrossEntropyLoss(reduction=reduction)
         hard_loss = loss_fct(
             shift_logits.view(-1, shift_logits.size(-1)),
             shift_labels.view(-1),
         )
+        if num_items_in_batch is not None:
+            hard_loss = hard_loss / num_items_in_batch
 
         if teacher_labels is not None:
             shift_teacher = teacher_labels[..., 1:].contiguous()
@@ -53,15 +65,11 @@ class DistillationTrainer(Trainer):
                 shift_logits.view(-1, shift_logits.size(-1)),
                 shift_teacher.view(-1),
             )
-
             if num_items_in_batch is not None:
-                hard_loss = hard_loss / num_items_in_batch
                 distill_loss = distill_loss / num_items_in_batch
 
             loss = self.alpha * hard_loss + (1.0 - self.alpha) * distill_loss
         else:
-            if num_items_in_batch is not None:
-                hard_loss = hard_loss / num_items_in_batch
             loss = hard_loss
 
         return (loss, outputs) if return_outputs else loss
@@ -80,12 +88,14 @@ class LLMTrainer(BaseTrainer):
 
     model_type = "llm"
     _TEACHER_OUTPUT_FIELD = "teacher_output"
+    # 相邻教师 API 调用之间的固定间隔（秒），降低云端速率限制（429）触发概率
+    _TEACHER_CALL_INTERVAL_SECONDS = 0.5
 
     def __init__(self, config: FinetuneConfig, base_model_id: str,
-                 teacher_model: Optional[str] = None):
+                 teacher_model: str | None = None):
         super().__init__(config, base_model_id)
         self.teacher_model = teacher_model  # None=纯SFT
-        self._tokenizer = None
+        self._tokenizer: AutoTokenizerType | None = None
 
     # ---- 蒸馏第1步：教师标签生成 ----
 
@@ -96,7 +106,8 @@ class LLMTrainer(BaseTrainer):
         输出: 同目录下的 instructions_with_teacher.jsonl
 
         断点续传: 检查 teacher_output 字段是否已存在，
-        已存在的跳过，便于 API 调用失败后重试。
+        已存在的跳过，便于 API 调用失败后重试。进度逐行落盘到 .tmp，
+        中断后下次运行可从 .tmp 恢复已生成的标签。
         """
         if self.teacher_model is None:
             raise ValueError("必须指定 teacher_model 参数才能生成教师标签")
@@ -105,35 +116,57 @@ class LLMTrainer(BaseTrainer):
         validate_llm_data(records)
 
         output_path = data_path.parent / f"{data_path.stem}_with_teacher.jsonl"
-
-        # 断点续传：先加载已有进度
-        existing = {}
-        if output_path.exists():
-            existing_records = load_jsonl(output_path)
-            for r in existing_records:
-                if self._TEACHER_OUTPUT_FIELD in r:
-                    key = (r.get("instruction", ""), r.get("input", ""))
-                    existing[key] = r[self._TEACHER_OUTPUT_FIELD]
-
         tmp_path = output_path.with_suffix(".jsonl.tmp")
+
+        # 断点续传：加载已有进度（含上次中断遗留的 .tmp 部分进度）
+        existing = self._load_teacher_progress([output_path, tmp_path])
+
+        made_call = False
         with open(tmp_path, "w", encoding="utf-8") as f:
             for i, r in enumerate(records):
                 key = (r.get("instruction", ""), r.get("input", ""))
                 if key in existing:
                     r[self._TEACHER_OUTPUT_FIELD] = existing[key]
                 else:
+                    # 简单限流：相邻调用之间固定间隔
+                    if made_call and self._TEACHER_CALL_INTERVAL_SECONDS > 0:
+                        time.sleep(self._TEACHER_CALL_INTERVAL_SECONDS)
                     teacher_answer = self._call_teacher(r["instruction"], r["input"])
                     r[self._TEACHER_OUTPUT_FIELD] = teacher_answer
+                    made_call = True
 
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                f.flush()  # 逐行落盘：中断时已生成的标签可从 .tmp 恢复
 
                 # 进度日志
                 if (i + 1) % 10 == 0:
-                    from logger import logger
                     logger.info(f"教师标签生成进度: {i + 1}/{len(records)}")
 
         os.replace(tmp_path, output_path)
         return output_path
+
+    def _load_teacher_progress(self, paths: list[Path]) -> dict:
+        """读取既有教师标签进度；后出现的文件覆盖先出现的（.tmp 更新）。
+
+        容忍中断产生的残缺行（跳过无法解析的 JSON）。
+        """
+        existing: dict = {}
+        for path in paths:
+            if not path.exists():
+                continue
+            with open(path, encoding="utf-8") as pf:
+                for line in pf:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue  # 中断残留的半行
+                    if self._TEACHER_OUTPUT_FIELD in r:
+                        key = (r.get("instruction", ""), r.get("input", ""))
+                        existing[key] = r[self._TEACHER_OUTPUT_FIELD]
+        return existing
 
     def _call_teacher(self, instruction: str, input_text: str) -> str:
         """调用云端教师模型生成答案。
@@ -143,19 +176,27 @@ class LLMTrainer(BaseTrainer):
         """
         # 尝试走项目 LLM 路由
         try:
-            from generation.llm_router import route_llm
             from langchain.schema import HumanMessage
+
+            from generation.llm_router import route_llm
             response = route_llm(
                 model=self.teacher_model,
                 messages=[HumanMessage(content=f"{instruction}\n\n{input_text}")],
             )
             return response.content
-        except ImportError:
-            pass
+        except (ImportError, AttributeError):
+            pass  # LLM 路由模块未就绪，降级到 Anthropic API 直调
+        except Exception as e:
+            logger.warning("LLM 路由调用失败: %s，降级到 Anthropic API 直调", e)
 
         # 过渡方案：直接调 Anthropic API
-        import os
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        # 优先通过 secrets_manager 获取，降级到环境变量
+        try:
+            from security import secrets as _sec
+            secret_obj = _sec.get_secret("ANTHROPIC_API_KEY", required=False)
+            api_key = str(secret_obj) if secret_obj else os.getenv("ANTHROPIC_API_KEY")
+        except Exception:
+            api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             raise RuntimeError(
                 "教师模型 API 密钥未配置。请设置 ANTHROPIC_API_KEY 环境变量，"
@@ -163,7 +204,6 @@ class LLMTrainer(BaseTrainer):
             )
 
         import anthropic
-        import time
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -174,7 +214,7 @@ class LLMTrainer(BaseTrainer):
                     messages=[{"role": "user", "content": f"{instruction}\n\n{input_text}"}],
                 )
                 return message.content[0].text
-            except Exception as e:
+            except Exception:
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
@@ -202,10 +242,10 @@ class LLMTrainer(BaseTrainer):
         if self.teacher_model is None:
             has_teacher_field = any(self._TEACHER_OUTPUT_FIELD in r for r in records)
             if has_teacher_field:
-                import warnings
                 warnings.warn(
                     f"数据中包含 '{self._TEACHER_OUTPUT_FIELD}' 字段，但 teacher_model 未设置。"
-                    f"将执行纯 SFT 训练，教师标签将被忽略。如需蒸馏请传入 teacher 参数。"
+                    f"将执行纯 SFT 训练，教师标签将被忽略。如需蒸馏请传入 teacher 参数。",
+                    stacklevel=2,
                 )
 
         def _to_dataset(recs: list[dict]) -> Dataset:
@@ -236,7 +276,7 @@ class LLMTrainer(BaseTrainer):
         human_prompts = [
             self._format_prompt(inst, inp, out)
             for inst, inp, out in zip(
-                examples["instruction"], examples["input"], examples["output"]
+                examples["instruction"], examples["input"], examples["output"], strict=True
             )
         ]
         tokenized = self._tokenizer(
@@ -250,7 +290,7 @@ class LLMTrainer(BaseTrainer):
         # Mask input tokens — only response tokens should contribute to loss
         prefix_texts = [
             self._format_prompt(inst, inp, "")
-            for inst, inp in zip(examples["instruction"], examples["input"])
+            for inst, inp in zip(examples["instruction"], examples["input"], strict=True)
         ]
         prefix_tokenized = self._tokenizer(
             prefix_texts,
@@ -267,7 +307,7 @@ class LLMTrainer(BaseTrainer):
             teacher_prompts = [
                 self._format_prompt(inst, inp, t_out)
                 for inst, inp, t_out in zip(
-                    examples["instruction"], examples["input"], examples["teacher_output"]
+                    examples["instruction"], examples["input"], examples["teacher_output"], strict=True
                 )
             ]
             teacher_tokenized = self._tokenizer(
@@ -287,7 +327,7 @@ class LLMTrainer(BaseTrainer):
 
     # ---- 训练 ----
 
-    def train(self, train_dataset: Dataset, eval_dataset: Optional[Dataset] = None) -> Path:
+    def train(self, train_dataset: Dataset, eval_dataset: Dataset | None = None) -> Path:
         device = self._resolve_device()
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.base_model_id, trust_remote_code=True

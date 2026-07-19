@@ -11,14 +11,17 @@
 """
 import os
 import sys
+import threading
 from pathlib import Path
-from typing import Optional, Dict, Any, Final
-from cryptography.fernet import Fernet, InvalidToken
-from cryptography.exceptions import InvalidSignature
+from typing import Any, Final
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.fernet import Fernet, InvalidToken
+
+from config import PROJECT_ROOT
 from logger import logger, security_logger
 from security.secret_str import SecretStr
-from config import PROJECT_ROOT
+
 
 # ==================== 安全配置 ====================
 class SecurityConfig:
@@ -93,8 +96,9 @@ class SecretsManager:
     """
 
     def __init__(self):
-        self._fernet: Optional[Fernet] = None
-        self._encrypted_cache: Dict[str, bytes] = {}
+        self._fernet: Fernet | None = None
+        self._encrypted_cache: dict[str, bytes] = {}
+        self._cache_lock = threading.Lock()
 
         try:
             self._load_key_file()
@@ -131,7 +135,12 @@ class SecretsManager:
         try:
             self._fernet = Fernet(stripped_key)
             test_val = b"__key_verification__"
-            assert self._fernet.decrypt(self._fernet.encrypt(test_val)) == test_val
+            # 不使用 assert（-O 模式下会被禁用），显式校验密钥自检
+            decrypted = self._fernet.decrypt(self._fernet.encrypt(test_val))
+            if decrypted != test_val:
+                raise ValueError(
+                    "Fernet 密钥自检失败：加密/解密往返不匹配"
+                )
         except Exception as e:
             raise ValueError(f"Key validation failed: {e}") from e
 
@@ -230,16 +239,18 @@ class SecretsManager:
         if not isinstance(value, str):
             raise TypeError(f"Secret value must be str, got {type(value).__name__}")
         encrypted = self._encrypt(value)
-        self._encrypted_cache[name] = encrypted
+        with self._cache_lock:
+            self._encrypted_cache[name] = encrypted
         security_logger.info("Secret stored: %s (encrypted in memory)", name)
 
     def get_secret(
             self,
             name: str,
-            default: Optional[str] = None,
+            default: str | None = None,
             required: bool = False
-    ) -> Optional[SecretStr]:
-        encrypted = self._encrypted_cache.get(name)
+    ) -> SecretStr | None:
+        with self._cache_lock:
+            encrypted = self._encrypted_cache.get(name)
         if encrypted is None:
             if required:
                 raise KeyError(f"Required secret '{name}' not found")
@@ -255,19 +266,20 @@ class SecretsManager:
             raise
 
     def delete_secret(self, name: str) -> bool:
-        if name in self._encrypted_cache:
-            del self._encrypted_cache[name]
-            security_logger.info("Secret purged from memory: %s", name)
-            return True
+        with self._cache_lock:
+            if name in self._encrypted_cache:
+                del self._encrypted_cache[name]
+                security_logger.info("Secret purged from memory: %s", name)
+                return True
         return False
 
-    def list_secrets(self) -> list:
-        return list(self._encrypted_cache.keys())
+    def list_secrets(self) -> list[str]:
+        return list(self._encrypted_cache)
 
     def is_encrypted(self) -> bool:
         return self._fernet is not None
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "encrypted": self.is_encrypted(),
             "environment": "production" if SecurityConfig.IS_PRODUCTION else "development",
@@ -281,6 +293,21 @@ class SecretsManager:
                 and not SecurityConfig.IS_PRODUCTION
             )
         }
+
+    def encrypt_string(self, value: str) -> str:
+        """公钥加密字符串，返回 ENC[...] 格式"""
+        if not self._fernet:
+            raise RuntimeError("Fernet not initialized")
+        encrypted_bytes = self._fernet.encrypt(value.encode("utf-8"))
+        return f"ENC[{encrypted_bytes.decode('utf-8')}]"
+
+    def decrypt_string(self, encrypted: str) -> str:
+        """解密 ENC[...] 格式字符串，返回明文"""
+        if not self._fernet:
+            raise RuntimeError("Fernet not initialized")
+        encrypted_bytes = encrypted.encode("utf-8")
+        decrypted_bytes = self._fernet.decrypt(encrypted_bytes)
+        return decrypted_bytes.decode("utf-8")
 
 
 # ==================== 全局实例 ====================
@@ -297,7 +324,7 @@ except Exception as e:
             def set_secret(self, name: str, value: str) -> None:
                 logger.debug("[INSECURE] Secret ignored in fallback mode: %s", name)
 
-            def get_secret(self, name: str, default=None, required=False) -> Optional[SecretStr]:
+            def get_secret(self, name: str, default=None, required=False) -> SecretStr | None:
                 val = os.getenv(name, default)
                 if required and val is None:
                     raise KeyError(f"Missing required env: {name}")
@@ -327,7 +354,7 @@ except Exception as e:
 
 # ==================== 便捷 API ====================
 
-def get_secret(name: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
+def get_secret(name: str, default: str | None = None, required: bool = False) -> str | None:
     secret_obj = secrets.get_secret(name, default=default, required=required)
     return secret_obj.get() if secret_obj else None
 
@@ -338,7 +365,7 @@ def set_secret(name: str, value: str) -> None:
 
 # ==================== 密钥管理工具 ====================
 
-def generate_key_file(filepath: Optional[str] = None) -> str:
+def generate_key_file(filepath: str | None = None) -> str:
     if SecurityConfig.IS_PRODUCTION and not SecurityConfig.IS_CI:
         raise RuntimeError("Key generation forbidden in production environment")
 
@@ -359,9 +386,9 @@ def generate_key_file(filepath: Optional[str] = None) -> str:
     fingerprint = key.hex()[:16]
     print(f"\n✓ Encryption key generated: {key_path.resolve()}")
     print(f"✓ Key fingerprint: {fingerprint}")
-    print(f"\n⚠️  CRITICAL NEXT STEPS:")
-    print(f"   1. Add to .gitignore: echo '.secret_key' >> .gitignore")
-    print(f"   2. Securely distribute to production hosts")
-    print(f"   3. NEVER commit to version control\n")
+    print("\n⚠️  CRITICAL NEXT STEPS:")
+    print("   1. Add to .gitignore: echo '.secret_key' >> .gitignore")
+    print("   2. Securely distribute to production hosts")
+    print("   3. NEVER commit to version control\n")
 
     return str(key_path.resolve())

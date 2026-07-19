@@ -2,9 +2,8 @@
 
 import threading
 
-from session.store import SessionStore
 from session.manager import SessionManager
-
+from session.store import SessionStore
 
 _session_manager: SessionManager | None = None
 _lock = threading.Lock()
@@ -20,4 +19,4 @@ def get_session_manager() -> SessionManager:
     return _session_manager
 
 
-__all__ = ["SessionStore", "SessionManager", "get_session_manager"]
+__all__ = ["SessionManager", "SessionStore", "get_session_manager"]

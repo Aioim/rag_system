@@ -2,14 +2,14 @@
 
 import inspect
 from pathlib import Path
-from typing import Tuple, Any
+from typing import Any
 
 # ==================== 辅助函数：精准获取调用位置（跳过框架层） ====================
 # 缓存：保存调用者信息
 _caller_info_cache = {}
 
 
-def _get_caller_info(skip_frames: int = 2) -> Tuple[str, str, int]:
+def _get_caller_info(skip_frames: int = 2) -> tuple[str, str, int]:
     """
     获取调用者信息（智能跳过框架层）
 

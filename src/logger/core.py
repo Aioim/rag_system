@@ -8,18 +8,17 @@ import os
 import sys
 import time
 import traceback
-from contextlib import contextmanager
-from datetime import datetime, timezone
+from collections.abc import Callable
+from contextlib import contextmanager, suppress
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Dict, NamedTuple, Optional, Callable
-from urllib.parse import urlparse, parse_qs
+from typing import NamedTuple
+from urllib.parse import parse_qs, urlparse
 
 from config import settings
+
 from .helpers import _get_actual_module_name, _get_caller_info
 from .lazy import LazyLogger
-from .masking import mask_sensitive_data
-
-LogConfig = settings.log
 
 
 class ParsedURL(NamedTuple):
@@ -71,14 +70,14 @@ class RequestLogger:
         return ParsedURL(parsed_url.path or '/', params, url)
 
     @staticmethod
-    def _format_params(params: Dict, max_len: int = 80) -> str:
+    def _format_params(params: dict, max_len: int = 80) -> str:
         if not params:
             return ""
 
         parts = []
         for k, v_list in params.items():
             v = v_list[0] if v_list else ""
-            if any(s in k.lower() for s in LogConfig.SENSITIVE_KEYS):
+            if any(s in k.lower() for s in settings.log.SENSITIVE_KEYS):
                 parts.append(f"{k}=******")
             else:
                 display = v[:20] + "..." if len(v) > 20 else v
@@ -118,16 +117,13 @@ def log_performance(
                 msg = f"{actual_module}.{func.__name__} {duration_ms:.2f}ms"
                 if mark_slow and duration_ms >= threshold_ms:
                     msg += " [SLOW]"
-                try:
+                with suppress(Exception):
                     log.log(_level, msg)
-                except Exception:
-                    # 避免日志记录失败影响业务
-                    pass
         return wrapper
     return decorator
 
 
-def log_exception(logger_param=None, exc: Optional[Exception] = None, context: str = ""):
+def log_exception(logger_param=None, exc: Exception | None = None, context: str = ""):
     log = logger_param or LazyLogger.get("rag")
     try:
         if exc is None:
@@ -142,7 +138,7 @@ def log_exception(logger_param=None, exc: Optional[Exception] = None, context: s
         log.error("%s\nTraceback:\n%s", msg, tb)
     except Exception as e:
         error_msg = f"[ERROR] Error in log_exception: {e}"
-        if not LogConfig.quiet:
+        if not settings.log.quiet:
             print(error_msg, file=sys.stderr)
 
 
@@ -151,7 +147,7 @@ def log_security_event(
     user: str = "unknown",
     resource: str = "",
     status: str = "success",
-    details: Optional[Dict] = None
+    details: dict | None = None
 ) -> bool:
     """安全事件记录（混合格式：前缀 + JSON）"""
     log = LazyLogger.get("security")
@@ -159,7 +155,7 @@ def log_security_event(
         safe_details = {}
         if details:
             for k, v in details.items():
-                if any(s in str(k).lower() for s in LogConfig.SENSITIVE_KEYS):
+                if any(s in str(k).lower() for s in settings.log.SENSITIVE_KEYS):
                     safe_details[k] = "******"
                 else:
                     safe_details[k] = v
@@ -169,7 +165,7 @@ def log_security_event(
             "user": user,
             "resource": resource,
             "status": status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "ip": os.getenv("CLIENT_IP", "unknown"),
             "env": settings.env,
             "details": safe_details
@@ -220,7 +216,5 @@ def log_duration(step_name: str, logger_param=None, threshold_ms: float = 50.0):
         msg = f"END {step_name} {duration_ms:.2f}ms"
         if duration_ms >= threshold_ms:
             msg += " [SLOW]"
-        try:
+        with suppress(Exception):
             log.info(msg)
-        except Exception:
-            pass

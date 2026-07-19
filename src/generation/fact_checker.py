@@ -5,6 +5,7 @@
 """
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from logger import logger
 
@@ -21,7 +22,8 @@ class FactCheckResult:
 class FactChecker:
     """check(answer, context) → (核查结果列表, 通过率)"""
 
-    def __init__(self, llm, temperature: float = 0):
+    def __init__(self, llm: Any, temperature: float = 0):
+        # TODO: 替换 Any 为 LLMProtocol，统一 llm 参数类型
         self._llm = llm
         self._temperature = temperature
 
@@ -38,9 +40,10 @@ class FactChecker:
 
         prompt = self._build_prompt(answer, context)
         try:
-            raw = (
-                await self._llm.ainvoke(prompt, temperature=self._temperature)
-            ).content
+            response = await self._llm.ainvoke(
+                prompt, temperature=self._temperature
+            )
+            raw = response.content if hasattr(response, "content") else str(response)
             results = self._parse_response(raw)
         except Exception:
             logger.warning("FactChecker LLM 调用或解析失败，跳过核查")
@@ -96,7 +99,10 @@ class FactChecker:
         for item in data:
             if not isinstance(item, dict):
                 continue
-            claim = str(item.get("claim", "")).strip()
+            claim_val = item.get("claim")
+            if claim_val is None or claim_val == "":
+                continue
+            claim = str(claim_val).strip()
             if not claim:
                 continue
             status = str(item.get("status", "")).strip().lower()

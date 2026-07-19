@@ -2,13 +2,13 @@
 微调配置模型 — Pydantic v2 + YAML 配置加载
 """
 
-import logging
+import threading
 from pathlib import Path
-from typing import Optional, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
+from logger import logger
 
 
 class LoRAConfig(BaseModel):
@@ -17,7 +17,7 @@ class LoRAConfig(BaseModel):
     r: int = Field(default=8, ge=1, le=256, description="LoRA rank")
     lora_alpha: int = Field(default=32, ge=1, description="LoRA alpha 缩放因子")
     lora_dropout: float = Field(default=0.1, ge=0.0, le=1.0, description="LoRA dropout")
-    target_modules: Optional[list[str]] = Field(
+    target_modules: list[str] | None = Field(
         default=None, description="目标模块名列表，None 则按模型类型自动推断"
     )
 
@@ -108,20 +108,24 @@ class FinetuneConfig(BaseModel):
         )
 
 
-# 缓存
-_config_cache: Optional[FinetuneConfig] = None
+# 缓存（threading.Lock 保护并发下只加载一次）
+_config_cache: FinetuneConfig | None = None
+_config_cache_lock = threading.Lock()
 
 
 def get_finetune_config() -> FinetuneConfig:
-    """获取微调配置单例（带缓存，首次调用从 YAML 加载）"""
+    """获取微调配置单例（带缓存，首次调用从 YAML 加载，线程安全）"""
     global _config_cache
     if _config_cache is None:
-        _config_cache = FinetuneConfig.from_yaml()
+        with _config_cache_lock:
+            if _config_cache is None:
+                _config_cache = FinetuneConfig.from_yaml()
     return _config_cache
 
 
 def reload_finetune_config() -> FinetuneConfig:
     """强制重新加载微调配置"""
     global _config_cache
-    _config_cache = FinetuneConfig.from_yaml()
+    with _config_cache_lock:
+        _config_cache = FinetuneConfig.from_yaml()
     return _config_cache

@@ -8,16 +8,17 @@
 - 防止敏感字段意外泄露到日志
 - 支持多行值、引号、转义字符
 """
+
 import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Set
+
 from cryptography.fernet import InvalidToken
 
-from security.secrets_manager import secrets as _global_secrets, SecretsManager
-from security.secret_str import SecretStr
-from logger import security_logger, logger
+from logger import logger, security_logger
+from security.secrets_manager import SecretsManager
+from security.secrets_manager import secrets as _global_secrets
 
 
 class SecureEnvLoader:
@@ -26,19 +27,24 @@ class SecureEnvLoader:
     ENC_PATTERN = re.compile(r'^ENC\[(?P<value>[A-Za-z0-9_\-+=/]+)\]$')
     MAX_ENC_LENGTH = 1024  # Fernet token 通常小于 200 字节
 
-    SECRET_KEY_PATTERNS: Set[str] = {
+    # shell 风格 `export KEY=value` 前缀（须跟空白，EXPORT_DIR 等变量名不受影响）
+    _EXPORT_PREFIX = re.compile(r'^export\s+')
+    # 未加引号值的行尾注释：`#` 须以空白开头（`a#b` 保留）
+    _INLINE_COMMENT = re.compile(r'\s+#.*$')
+
+    SECRET_KEY_PATTERNS: frozenset[str] = frozenset({
         'password', 'pwd', 'secret', 'key', 'token', 'credential',
         'api_key', 'access_key', 'secret_key', 'webhook_secret',
         'private_key', 'cert', 'certificate'
-    }
+    })
 
-    def __init__(self, env_file: Optional[Path] = None):
+    def __init__(self, env_file: Path | None = None):
         self.env_file = env_file or Path('.env')
         self.secrets_manager = _global_secrets  # 复用模块级单例，避免重复加载密钥
-        self._loaded_values: Dict[str, str] = {}
-        self._decryption_errors: Dict[str, str] = {}
+        self._loaded_values: dict[str, str] = {}
+        self._decryption_errors: dict[str, str] = {}
 
-    def load(self, override: bool = False) -> Dict[str, str]:
+    def load(self, override: bool = False) -> dict[str, str]:
         if not self.env_file.exists():
             logger.warning("Env file not found: %s", self.env_file)
             return {}
@@ -50,8 +56,8 @@ class SecureEnvLoader:
         plain_fields = {}
 
         for key, value in parsed.items():
-            if self.is_encrypted_value(value):
-                match = self.ENC_PATTERN.match(value)
+            match = self.ENC_PATTERN.match(value)
+            if match:
                 encrypted_fields[key] = match.group('value')
             else:
                 plain_fields[key] = value
@@ -84,26 +90,28 @@ class SecureEnvLoader:
 
         return self._loaded_values
 
-    def _read_env_lines(self) -> list[Tuple[int, str]]:
+    def _read_env_lines(self) -> list[tuple[int, str]]:
         lines = []
-        with open(self.env_file, 'r', encoding='utf-8') as f:
+        with open(self.env_file, encoding='utf-8') as f:
             for idx, line in enumerate(f, 1):
                 lines.append((idx, line.rstrip('\n\r')))
         return lines
 
-    def _parse_env_lines(self, lines: list[Tuple[int, str]]) -> Dict[str, str]:
+    def _parse_env_lines(self, lines: list[tuple[int, str]]) -> dict[str, str]:
         env_vars = {}
         current_key = None
         current_value = []
         in_quotes = False
         quote_char = None
 
-        for line_no, line in lines:
+        for _line_no, line in lines:
             stripped = line.strip()
             if not stripped or stripped.startswith('#'):
                 continue
 
             if '=' in stripped and not in_quotes:
+                # 支持 shell 风格 `export KEY=value`
+                stripped = self._EXPORT_PREFIX.sub('', stripped)
                 key, value = stripped.split('=', 1)
                 key = key.strip()
                 value = value.strip()
@@ -121,7 +129,9 @@ class SecureEnvLoader:
                     current_value = [value[1:]]
                     continue
                 else:
-                    env_vars[key] = self._unescape_value(value)
+                    env_vars[key] = self._unescape_value(
+                        self._strip_inline_comment(value)
+                    )
             elif in_quotes:
                 if stripped.endswith(quote_char):
                     current_value.append(stripped[:-1])
@@ -135,6 +145,16 @@ class SecureEnvLoader:
 
         return env_vars
 
+    @classmethod
+    def _strip_inline_comment(cls, value: str) -> str:
+        """去除未加引号值的行尾注释（`KEY=value # comment` → `value`）
+
+        引号包裹的值不处理，其内容原样保留。
+        """
+        if value.startswith(('"', "'")):
+            return value
+        return cls._INLINE_COMMENT.sub('', value).rstrip()
+
     def _unescape_value(self, value: str) -> str:
         value = value.strip().strip('"').strip("'")
         # 注意：必须先处理 \n \t 再处理 \\，否则 \\n → \ + n → 被后续误转为换行
@@ -142,12 +162,10 @@ class SecureEnvLoader:
         return value.replace('\\\\', '\\')
 
     def _decrypt_env_value(self, encrypted_b64: str) -> str:
-        encrypted_bytes = encrypted_b64.encode('utf-8')
-        if not isinstance(self.secrets_manager, SecretsManager) or not self.secrets_manager._fernet:
+        if not hasattr(self.secrets_manager, "decrypt_string"):
             raise RuntimeError("Fernet not initialized")
         try:
-            decrypted_bytes = self.secrets_manager._fernet.decrypt(encrypted_bytes)
-            return decrypted_bytes.decode('utf-8')
+            return self.secrets_manager.decrypt_string(encrypted_b64)
         except InvalidToken as e:
             raise ValueError(
                 "Decryption failed: Invalid token (key mismatch or corrupted data).\n"
@@ -178,7 +196,7 @@ class SecureEnvLoader:
         # 默认截断
         return value if len(value) < 20 else f"{value[:15]}..."
 
-    def _log_load_summary(self, plain_fields: Dict, encrypted_fields: Dict):
+    def _log_load_summary(self, plain_fields: dict, encrypted_fields: dict):
         total = len(plain_fields) + len(encrypted_fields)
         failed = len(self._decryption_errors)
         success_enc = len(encrypted_fields) - failed
@@ -218,7 +236,7 @@ class SecureEnvLoader:
 
 # ========== 全局便捷函数 ==========
 
-def load_secure_dotenv(dotenv_path: Optional[str] = None, override: bool = False) -> bool:
+def load_secure_dotenv(dotenv_path: str | None = None, override: bool = False) -> bool:
     env_path = Path(dotenv_path) if dotenv_path else Path('.env')
     loader = SecureEnvLoader(env_path)
     loader.load(override=override)

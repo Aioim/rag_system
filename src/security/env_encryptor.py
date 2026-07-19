@@ -14,12 +14,13 @@
     $ python -m security.env_encrypt --decrypt ENC[gAAAA...]
 """
 import argparse
-import sys
+import getpass
 import os
+import sys
 from pathlib import Path
-from typing import Optional
 
-from .secrets_manager import secrets as _global_secrets, SecretsManager
+from .secrets_manager import SecretsManager
+from .secrets_manager import secrets as _global_secrets
 from .secure_env_loader import SecureEnvLoader
 
 
@@ -37,11 +38,9 @@ def encrypt_value(value: str) -> str:
         #>>> encrypt_value("mysecretpassword")
         'ENC[gAAAAABkX9J3mZqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7XqV7]'
     """
-    if not isinstance(_global_secrets, SecretsManager) or not _global_secrets._fernet:
+    if not hasattr(_global_secrets, "encrypt_string"):
         raise RuntimeError("Fernet not initialized")
-
-    encrypted_bytes = _global_secrets._fernet.encrypt(value.encode('utf-8'))
-    return f"ENC[{encrypted_bytes.decode('utf-8')}]"
+    return _global_secrets.encrypt_string(value)
 
 
 def decrypt_value(encrypted_str: str) -> str:
@@ -65,12 +64,9 @@ def decrypt_value(encrypted_str: str) -> str:
         raise ValueError("Invalid ENC format: must be ENC[...]")
 
     encrypted_b64 = encrypted_str[4:-1]
-    if not isinstance(_global_secrets, SecretsManager) or not _global_secrets._fernet:
+    if not hasattr(_global_secrets, "decrypt_string"):
         raise RuntimeError("Fernet not initialized")
-
-    encrypted_bytes = encrypted_b64.encode('utf-8')
-    decrypted_bytes = _global_secrets._fernet.decrypt(encrypted_bytes)
-    return decrypted_bytes.decode('utf-8')
+    return _global_secrets.decrypt_string(encrypted_b64)
 
 def fetch_and_decrypt_env_var(env_var: str) -> str:
     """
@@ -109,12 +105,12 @@ def fetch_and_decrypt_env_var(env_var: str) -> str:
         return decrypt_value(encrypted_value)
     except ValueError as e:
         # 重新抛出带有更详细信息的异常
-        raise ValueError(f"Failed to decrypt '{env_var}': {str(e)}")
+        raise ValueError(f"Failed to decrypt '{env_var}': {e!s}") from e
     except Exception as e:
-        raise RuntimeError(f"Error decrypting '{env_var}': {str(e)}")
+        raise RuntimeError(f"Error decrypting '{env_var}': {e!s}") from e
 
 
-def process_env_file(input_path: str, output_path: Optional[str] = None):
+def process_env_file(input_path: str, output_path: str | None = None):
     """
     加密 .env 文件中的敏感字段
 
@@ -138,7 +134,7 @@ def process_env_file(input_path: str, output_path: Optional[str] = None):
     sensitive_keys = SecureEnvLoader.SECRET_KEY_PATTERNS
     encrypted_count = 0
 
-    with open(input_file, 'r', encoding='utf-8') as f_in:
+    with open(input_file, encoding='utf-8') as f_in:
         lines = f_in.readlines()
 
     with open(output_file, 'w', encoding='utf-8') as f_out:
@@ -187,7 +183,7 @@ def process_env_file(input_path: str, output_path: Optional[str] = None):
     print(f"\n✅ Encrypted {encrypted_count} fields")
     print(f"   Input:  {input_file.resolve()}")
     print(f"   Output: {output_file.resolve()}")
-    print(f"\n⚠️  CRITICAL NEXT STEPS:")
+    print("\n⚠️  CRITICAL NEXT STEPS:")
     print(f"   1. Verify output: diff {input_file.name} {output_file.name}")
     print(f"   2. NEVER commit {input_file.name} to Git")
     print(f"   3. Add to .gitignore: echo '{input_file.name}' >> .gitignore")
@@ -213,7 +209,7 @@ def interactive_encrypt():
 
     print(f"\nEnter the value for {key}:")
     try:
-        value = input("> ").strip()
+        value = getpass.getpass("> ").strip()
     except KeyboardInterrupt:
         print("\n\n❌ Operation cancelled by user")
         sys.exit(1)

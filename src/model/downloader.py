@@ -3,13 +3,13 @@ HuggingFace 模型下载引擎 — 进度显示 + 断点续传 + 重试 + 错误
 支持 HuggingFace / hf-mirror / ModelScope（魔塔）三种下载源
 """
 
-import time
 import shutil
+import time
 from pathlib import Path
-from typing import Optional, Dict
 
 from huggingface_hub import snapshot_download
 from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
+
 from logger import logger
 
 
@@ -29,8 +29,8 @@ class ModelDownloader:
     """HuggingFace 模型下载器"""
 
     def __init__(self, cache_dir: Path, max_retries: int = 3,
-                 hf_token: Optional[str] = None,
-                 endpoint: Optional[str] = None):
+                 hf_token: str | None = None,
+                 endpoint: str | None = None):
         self._cache_dir = cache_dir
         self._max_retries = max_retries
         self._hf_token = hf_token
@@ -66,8 +66,8 @@ class ModelDownloader:
                 snapshot_download(**kwargs)
                 logger.info(f"模型下载完成: {model_id}")
                 return local_dir
-            except RepositoryNotFoundError:
-                raise ValueError(f"模型仓库不存在: {model_id}")
+            except RepositoryNotFoundError as e:
+                raise ValueError(f"模型仓库不存在: {model_id}") from e
             except (HfHubHTTPError, OSError) as e:
                 if attempt < self._max_retries:
                     wait = 2 ** (attempt - 1)
@@ -91,15 +91,15 @@ class ModelDownloader:
         if not local_dir.is_dir():
             return False
         for f in local_dir.rglob("*"):
-            if f.is_file() and f.suffix in (".safetensors", ".bin", ".onnx", ".msgpack", ".h5", ".ckpt", ".pt"):
+            if f.is_file() and f.suffix in self._WEIGHT_EXTS:
                 return True
         return False
 
-    _WEIGHT_EXTS = {".safetensors", ".bin", ".onnx", ".msgpack", ".h5", ".ckpt", ".pt"}
+    _WEIGHT_EXTS: frozenset = frozenset({".safetensors", ".bin", ".onnx", ".msgpack", ".h5", ".ckpt", ".pt"})
 
-    def list_downloaded(self) -> Dict[str, Path]:
+    def list_downloaded(self) -> dict[str, Path]:
         """列出所有已下载模型（只返回含权重文件的完整模型）"""
-        result: Dict[str, Path] = {}
+        result: dict[str, Path] = {}
         if not self._cache_dir.is_dir():
             return result
 

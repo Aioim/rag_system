@@ -1,10 +1,12 @@
 """Ingestion Pipeline 演示入口 — python -m ingestion"""
 
 import asyncio
+import json
 import sys
 import tempfile
 from pathlib import Path
 
+from config.path import PROJECT_ROOT
 
 DEMO_MARKDOWN = """\
 # 企业知识库 — 员工手册
@@ -80,7 +82,7 @@ async def run_demo():
                 print("   HuggingFace 下载失败，尝试 ModelScope（魔塔）...")
                 try:
                     download_from_modelscope(
-                        "BAAI/bge-large-zh-v1.5", cache_dir="models"
+                        "BAAI/bge-large-zh-v1.5", cache_dir=str(PROJECT_ROOT / "models")
                     )
                     print("✅ 下载完成 (ModelScope)")
                 except Exception as e2:
@@ -103,7 +105,7 @@ async def run_demo():
         ctx = await pipeline.run(tmp_path, collection="demo")
 
         print("-" * 40)
-        print(f"\n📊 处理结果:")
+        print("\n📊 处理结果:")
         print(f"   状态: {ctx.status}")
         print(f"   文档: {ctx.document.title}")
 
@@ -118,7 +120,7 @@ async def run_demo():
 
         # 分块统计
         if ctx.chunks:
-            print(f"\n📦 分块统计:")
+            print("\n📦 分块统计:")
             print(f"   总数: {len(ctx.chunks)}")
             sizes = [len(c.text) for c in ctx.chunks]
             print(f"   平均大小: {sum(sizes) / len(sizes):.0f} 字符")
@@ -143,8 +145,6 @@ async def run_demo():
             )
             print(f"\n📁 索引已写入: {index_dir}")
             print(f"   文件大小: {index_size:,} bytes")
-
-            import json
 
             docstore_path = index_dir / "docstore.json"
             if docstore_path.exists():

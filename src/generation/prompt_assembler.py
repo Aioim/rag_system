@@ -26,9 +26,15 @@ class PromptAssembler:
         """与已保留 chunk 相似度 > threshold 时丢弃（输入降序，先到者分高）
 
         两者均有 embedding 时用余弦相似度，否则降级为文本精确比对。
+        另按扩展窗口成员判重：ContextExpander 扩展后 embedding 仍是原始
+        向量，无法反映窗口文本重叠；若命中 chunk 的 id 已被某个保留窗口
+        覆盖，其正文已在上下文中，直接丢弃。
         """
         kept: list[Chunk] = []
+        covered_ids: set[str] = set()
         for c in chunks:
+            if c.chunk_id in covered_ids:
+                continue
             duplicated = False
             for k in kept:
                 if c.embedding is not None and k.embedding is not None:
@@ -40,6 +46,9 @@ class PromptAssembler:
                     break
             if not duplicated:
                 kept.append(c)
+                covered_ids.update(
+                    c.metadata.get("window_chunk_ids") or [c.chunk_id]
+                )
         return kept
 
     @staticmethod

@@ -83,7 +83,7 @@ class TestApplyOverrides:
             "embedding", "--data", "test.jsonl",
             "--epochs", "10", "--batch-size", "4",
         ])
-        _apply_overrides(config, args)
+        config = _apply_overrides(config, args)
 
         assert config.training.epochs == 10
         assert config.training.batch_size == 4

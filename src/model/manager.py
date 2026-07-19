@@ -5,14 +5,15 @@
 import os
 import threading
 from pathlib import Path
-from typing import ClassVar, Optional, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar, Optional
 
 if TYPE_CHECKING:
+    from .finetune.base import BaseTrainer, FinetuneInfo, FinetuneResult
     from .finetune.config import FinetuneConfig
-    from .finetune.base import FinetuneResult, FinetuneInfo
 
 from config import settings
 from logger import logger
+
 from .downloader import ModelDownloader
 
 # "reranker" → "rerank" 等类型别名映射（默认配置中以短名称存储）
@@ -52,9 +53,9 @@ class ModelManager:
             with cls._lock:
                 if cls._instance is None:
                     instance = super().__new__(cls)
-                    instance._downloader: Optional[ModelDownloader] = None
-                    instance._defaults: Dict[str, str] = {}
-                    instance._cache_dir: Optional[Path] = None
+                    instance._downloader: ModelDownloader | None = None
+                    instance._defaults: dict[str, str] = {}
+                    instance._cache_dir: Path | None = None
                     instance._initialized = False
                     cls._instance = instance
         return cls._instance
@@ -91,11 +92,11 @@ class ModelManager:
     # 公共 API
     # ========================================================================
 
-    def download_all(self) -> List[Path]:
+    def download_all(self) -> list[Path]:
         """下载所有默认模型，返回已下载的路径列表"""
         self._ensure_init()
-        paths: List[Path] = []
-        errors: Dict[str, str] = {}
+        paths: list[Path] = []
+        errors: dict[str, str] = {}
         for model_type, model_id in self._defaults.items():
             if not model_id:
                 continue
@@ -106,6 +107,7 @@ class ModelManager:
                 logger.error(f"下载失败 [{model_type}] {model_id}: {e}")
                 errors[model_type] = str(e)
         if errors:
+            logger.error(f"部分模型下载失败: {errors}")
             raise RuntimeError(
                 f"部分模型下载失败: {errors}"
             )
@@ -121,7 +123,12 @@ class ModelManager:
         model_id = self._resolve_model_id(type_or_id)
         return self._download_by_id(model_id)
 
-    def get_path(self, type_or_id: str) -> Optional[Path]:
+    def get_default_model_id(self, model_type: str) -> str | None:
+        """获取指定类型的默认模型 ID（不触发初始化副作用）"""
+        self._ensure_init()
+        return self._defaults.get(model_type)
+
+    def get_path(self, type_or_id: str) -> Path | None:
         """获取模型本地路径（不触发下载）"""
         self._ensure_init()
         model_id = self._resolve_model_id(type_or_id)
@@ -135,12 +142,12 @@ class ModelManager:
         model_id = self._resolve_model_id(type_or_id)
         return self._downloader.is_downloaded(model_id)
 
-    def list_downloaded(self) -> Dict[str, Path]:
+    def list_downloaded(self) -> dict[str, Path]:
         """列出所有已下载的模型，返回 {model_id: local_path}"""
         self._ensure_init()
         return self._downloader.list_downloaded()
 
-    def status(self) -> Dict[str, bool]:
+    def status(self) -> dict[str, bool]:
         """各类型的下载状态：{model_type: is_downloaded}"""
         self._ensure_init()
         downloaded = self._downloader.list_downloaded()
@@ -172,9 +179,9 @@ class ModelManager:
     def finetune(
         self,
         model_type: str,
-        data_path: str,
-        output_name: Optional[str] = None,
-        teacher: Optional[str] = None,
+        data_path: str | Path,
+        output_name: str | None = None,
+        teacher: str | None = None,
         config: Optional["FinetuneConfig"] = None,
         **overrides,
     ) -> "FinetuneResult":
@@ -191,33 +198,41 @@ class ModelManager:
         Returns:
             FinetuneResult with adapter_path, metrics, etc.
         """
-        from .finetune.config import FinetuneConfig, get_finetune_config
+        from .finetune.config import get_finetune_config
         from .finetune.embedding_trainer import EmbeddingTrainer
-        from .finetune.reranker_trainer import RerankerTrainer
         from .finetune.llm_trainer import LLMTrainer
-        from .finetune.base import FinetuneResult
+        from .finetune.reranker_trainer import RerankerTrainer
 
         self._ensure_init()
 
-        # 解析配置（有 overrides 时创建新实例，避免污染缓存单例）
+        # 解析配置（有 overrides 时基于 YAML 配置深拷贝，避免污染缓存单例）
         if config is not None:
             cfg = config
         elif overrides:
-            cfg = FinetuneConfig()  # 新鲜默认值，不修改缓存
+            cfg = get_finetune_config().model_copy(deep=True)
         else:
             cfg = get_finetune_config()
 
         # 解析类型别名（"reranker" → "rerank"）
         resolved_type = _MODEL_TYPE_ALIASES.get(model_type, model_type)
 
-        # 应用 overrides
+        # 应用 overrides（通过 model_copy 创建新对象，保持 Pydantic 不可变语义）
+        training_updates: dict = {}
+        lora_updates: dict = {}
+        distill_updates: dict = {}
         for key, value in overrides.items():
             if hasattr(cfg.training, key):
-                setattr(cfg.training, key, value)
+                training_updates[key] = value
             elif hasattr(cfg.lora, key):
-                setattr(cfg.lora, key, value)
+                lora_updates[key] = value
             elif hasattr(cfg.distillation, key):
-                setattr(cfg.distillation, key, value)
+                distill_updates[key] = value
+        if training_updates:
+            cfg.training = cfg.training.model_copy(update=training_updates)
+        if lora_updates:
+            cfg.lora = cfg.lora.model_copy(update=lora_updates)
+        if distill_updates:
+            cfg.distillation = cfg.distillation.model_copy(update=distill_updates)
 
         # 解析基座模型
         if resolved_type not in self._defaults:
@@ -229,38 +244,40 @@ class ModelManager:
         base_model_id = self._defaults[resolved_type]
 
         # 选择 Trainer
-        data_path = Path(data_path)
-        trainer_classes = {
+        data_path_obj = Path(data_path) if not isinstance(data_path, Path) else data_path
+        trainer_classes: dict[str, type] = {
             "embedding": EmbeddingTrainer,
             "rerank": RerankerTrainer,
             "llm": LLMTrainer,
         }
 
         trainer_cls = trainer_classes[resolved_type]
+        trainer: BaseTrainer
         if resolved_type == "llm" and teacher:
             trainer = LLMTrainer(cfg, base_model_id, teacher_model=teacher)
         else:
             trainer = trainer_cls(cfg, base_model_id)
 
         logger.info(
-            f"开始微调 [{model_type}] base={base_model_id} data={data_path}"
+            f"开始微调 [{model_type}] base={base_model_id} data={data_path_obj}"
             + (f" teacher={teacher}" if teacher else "")
         )
 
-        return trainer.run(data_path, output_name=output_name)
+        return trainer.run(data_path_obj, output_name=output_name)
 
-    def list_finetuned(self) -> Dict[str, "FinetuneInfo"]:
+    def list_finetuned(self) -> dict[str, "FinetuneInfo"]:
         """列出所有已微调的适配器，返回 {name: FinetuneInfo}"""
         self._ensure_init()
-        from .finetune.config import get_finetune_config
-        from .finetune.base import BaseTrainer
         from config.path import PROJECT_ROOT
+
+        from .finetune.base import BaseTrainer
+        from .finetune.config import get_finetune_config
 
         cfg = get_finetune_config()
         output_dir = cfg.resolve_output_dir(PROJECT_ROOT)
         return BaseTrainer.scan_finetuned(output_dir)
 
-    def get_finetuned_path(self, name: str) -> Optional[Path]:
+    def get_finetuned_path(self, name: str) -> Path | None:
         """获取指定适配器的本地路径"""
         adapters = self.list_finetuned()
         info = adapters.get(name)

@@ -4,9 +4,10 @@ from dataclasses import dataclass
 
 from logger import logger
 from models.enums import Intent
+from models.llm import LLMProtocol
 
 
-@dataclass
+@dataclass(frozen=True)
 class IntentResult:
     """意图分类结果"""
     intent: Intent
@@ -20,20 +21,22 @@ class IntentClassifier:
     失败时降级为 intent=CONCEPT, is_clear=True。
     """
 
-    def __init__(self, llm, temperature: float | None = None):
+    def __init__(self, llm: LLMProtocol, temperature: float | None = None) -> None:
         self._llm = llm
         self._temperature = temperature
 
     async def classify(self, query: str) -> IntentResult:
         prompt = self._build_prompt(query)
         try:
-            kwargs = {}
+            kwargs: dict[str, float] = {}
             if self._temperature is not None:
                 kwargs["temperature"] = self._temperature
             raw = (await self._llm.ainvoke(prompt, **kwargs)).content
             return self._parse_response(raw)
         except Exception:
-            logger.warning("IntentClassifier LLM 调用或解析失败，降级为默认意图")
+            logger.warning(
+                "IntentClassifier LLM 调用或解析失败，降级为默认意图", exc_info=True
+            )
             return IntentResult(
                 intent=Intent.CONCEPT,
                 is_clear=True,
@@ -78,7 +81,7 @@ class IntentClassifier:
         if raw_clear is None:
             is_clear = False  # null → 问题不清晰
         elif isinstance(raw_clear, str):
-            is_clear = raw_clear.strip().lower() != "false"
+            is_clear = raw_clear.strip().lower() not in ("false", "no", "0", "n", "none")
         elif isinstance(raw_clear, bool):
             is_clear = raw_clear
         else:
@@ -141,8 +144,6 @@ class IntentClassifier:
 # ============================================================================
 if __name__ == "__main__":
     import asyncio
-
-
     from types import SimpleNamespace
 
     class _MockLLM:

@@ -1,18 +1,22 @@
 """查询理解层主编排器 — Pipeline 链式编排"""
+import asyncio
+
 from config.aliases import resolve_aliases_in_text
+from logger import logger
 from models.context import PipelineContext
-from session.manager import SessionManager
-from query.intent_classifier import IntentClassifier
+from models.llm import LLMProtocol
 from query.context_fuser import ContextFuser
+from query.intent_classifier import IntentClassifier
 from query.rewriters import QueryRewriter
+from session.manager import SessionManager
 
 
 class QueryUnderstandingLayer:
     """查询理解层 — 别名映射 → 意图分类 → 上下文融合 → 查询改写"""
 
-    def __init__(self, llm, session_manager: SessionManager):
+    def __init__(self, llm: LLMProtocol, session_manager: SessionManager | None = None) -> None:
         self.intent_classifier = IntentClassifier(llm, temperature=0)
-        self.context_fuser = ContextFuser(llm, session_manager, temperature=0)
+        self.context_fuser = ContextFuser(llm, temperature=0)
         self.rewriter = QueryRewriter(llm)
         self._session_manager = session_manager
 
@@ -25,8 +29,11 @@ class QueryUnderstandingLayer:
         ctx = PipelineContext(query=query, collection=collection)
         ctx.original_query = query
 
-        # 1. 别名映射
-        query = resolve_aliases_in_text(query)
+        # 1. 别名映射（解析失败衰减回原始 query，不阻塞 Pipeline）
+        try:
+            query = resolve_aliases_in_text(query)
+        except Exception:
+            logger.warning("别名映射解析失败，使用原始 query 降级")
         ctx.query = query
 
         # 2. 意图分类 + 清晰度判断
@@ -36,13 +43,19 @@ class QueryUnderstandingLayer:
             ctx.needs_clarification = True
             ctx.clarification_question = result.clarification_question
             # 短路时也尝试获取 session（用于后续记录澄清交互）
-            if session_id:
-                ctx.session = self._session_manager.get(session_id)
+            if session_id and self._session_manager is not None:
+                # 同步 SQLite 读取移出事件循环线程
+                ctx.session = await asyncio.to_thread(
+                    self._session_manager.get, session_id
+                )
             return ctx
 
         # 3. 多轮上下文融合
-        if session_id:
-            session = self._session_manager.get(session_id)
+        if session_id and self._session_manager is not None:
+            # 同步 SQLite 读取移出事件循环线程
+            session = await asyncio.to_thread(
+                self._session_manager.get, session_id
+            )
             ctx.session = session
             if session is not None:
                 query = await self.context_fuser.fuse(query, session)
@@ -58,8 +71,6 @@ class QueryUnderstandingLayer:
 # ============================================================================
 if __name__ == "__main__":
     import asyncio
-
-
     from types import SimpleNamespace
 
     class _MockLLM:
@@ -85,7 +96,7 @@ if __name__ == "__main__":
 
     async def main():
         # 最简单的 Mock SessionManager
-        sm = type("_SM", (), {"get": lambda self, sid: _MockSession(sid)})()
+        sm = SimpleNamespace(get=lambda sid: _MockSession(sid))
 
         llm = _MockLLM()
         layer = QueryUnderstandingLayer(llm, sm)
