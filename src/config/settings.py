@@ -327,6 +327,15 @@ class FinetuneConfig(_BaseConfig):
     distillation: FinetuneDistillationConfig = Field(default_factory=FinetuneDistillationConfig)
 
 
+class AgentConfig(_BaseConfig):
+    """ReAct Agent 配置"""
+    max_iterations: int = Field(default=5, ge=1, le=20)
+    search_top_k: int = Field(default=3, ge=1, le=10)
+    max_observation_chars: int = Field(default=3000, ge=100, le=10000)
+    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    max_consecutive_duplicates: int = Field(default=2, ge=1, le=5)
+
+
 class RAGAppConfig(BaseModel):
     """RAG 应用主配置 — 支持环境变量覆盖（双下划线表示嵌套）"""
     # 核心
@@ -350,6 +359,7 @@ class RAGAppConfig(BaseModel):
     log: LogConfig = Field(default_factory=LogConfig)
     faiss: FaissConfig = Field(default_factory=FaissConfig)
     finetune: FinetuneConfig = Field(default_factory=FinetuneConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
 
     @field_validator("env")
     @classmethod
@@ -592,6 +602,7 @@ class ConfigManager:
 settings = ConfigManager()
 
 __all__ = [
+    "AgentConfig",
     "APIConfig",
     "AliasConfig",
     "ChunkingConfig",

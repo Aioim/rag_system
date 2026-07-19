@@ -214,3 +214,13 @@ finetune:
   distillation:
     temperature: 2.0
     alpha: 0.5                      # 硬标签权重（0=纯蒸馏，1=纯SFT）
+
+# --------------------------------------------------------------------------
+# ReAct Agent 配置
+# --------------------------------------------------------------------------
+agent:
+  max_iterations: 5
+  search_top_k: 3
+  max_observation_chars: 3000
+  llm_temperature: 0.0
+  max_consecutive_duplicates: 2
