@@ -14,7 +14,7 @@ class PyMuPDF4LLMParser(BaseParser):
     name = "pymupdf4llm"
     supported_formats = ("pdf",)
 
-    def parse(self, source_path: Path) -> str:
+    def parse(self, source_path: Path, output_dir: Path | None = None) -> str:
         try:
             import pymupdf4llm  # noqa: F401
         except ImportError:

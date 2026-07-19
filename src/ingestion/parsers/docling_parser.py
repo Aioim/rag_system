@@ -19,7 +19,7 @@ class DoclingParser(BaseParser):
     _converter: object | None = None
     _lock = threading.Lock()
 
-    def parse(self, source_path: Path) -> str:
+    def parse(self, source_path: Path, output_dir: Path | None = None) -> str:
         if DoclingParser._converter is None:
             with DoclingParser._lock:
                 if DoclingParser._converter is None:

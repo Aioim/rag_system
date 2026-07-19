@@ -60,7 +60,7 @@ retrieval:
 ingestion:
   parsed_doc_dir: data/parsed_docs   # 解析后 Markdown 输出目录（相对于 PROJECT_ROOT）
   parsers:                           # 文件扩展名 → 解析器名称映射
-    pdf: docling                     # 可选: pymupdf4llm
+    pdf: docling                     # 可选: pymupdf4llm | mineru
     docx: docling
     doc: docling
     pptx: docling
@@ -69,6 +69,9 @@ ingestion:
     md: direct                       # 直接读取，不经过 docling
     markdown: direct
     txt: direct
+  mineru:                            # MinerU 解析器专用配置
+    device: cpu                      # cpu | cuda | mps
+    models_dir: models/mineru        # MinerU 模型权重目录（相对于 PROJECT_ROOT）
 
 # --------------------------------------------------------------------------
 # 文档分块

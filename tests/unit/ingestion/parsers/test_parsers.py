@@ -20,8 +20,8 @@ class TestRegistry:
     """解析器注册表 & 工厂函数测试"""
 
     def test_all_builtin_parsers_registered(self):
-        """三个内置解析器均可通过 get_parser 获取"""
-        for name in ("direct", "docling", "pymupdf4llm"):
+        """四个内置解析器均可通过 get_parser 获取"""
+        for name in ("direct", "docling", "pymupdf4llm", "mineru"):
             parser = get_parser(name)
             assert parser.name == name
 

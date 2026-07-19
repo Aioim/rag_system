@@ -31,7 +31,7 @@ class ParserStage:
         # 委托解析（parse() 是同步方法，通过 run_in_executor 异步化）
         loop = asyncio.get_running_loop()
         ctx.document.raw_text = await loop.run_in_executor(
-            None, parser.parse, source_path
+            None, parser.parse, source_path, settings.ingestion.parsed_doc_dir
         )
 
         # 将解析后的 Markdown 写入磁盘

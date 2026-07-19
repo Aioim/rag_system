@@ -70,9 +70,16 @@ class RetrievalConfig(_BaseConfig):
         return self
 
 
+class MinerUConfig(BaseModel):
+    """MinerU 解析器配置"""
+    device: str = "cpu"  # cpu | cuda | mps
+    models_dir: str = "models/mineru"
+
+
 class IngestionConfig(_BaseConfig):
     """文档处理（离线 Pipeline）配置"""
     parsed_doc_dir: Path = PROJECT_ROOT / "data" / "parsed_docs"
+    mineru: MinerUConfig = Field(default_factory=MinerUConfig)
     parsers: dict[str, str] = Field(default_factory=lambda: {
         "pdf": "docling",
         "docx": "docling",

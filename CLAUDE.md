@@ -429,15 +429,18 @@ ctx = await pipeline.run(Path("docs/员工手册.md"), collection="hr_docs")
 |--------|------|----------|------|
 | `DoclingParser` | `docling` | pdf, docx, doc, pptx, ppt, html | docling>=2.0 |
 | `PyMuPDF4LLMParser` | `pymupdf4llm` | pdf | pymupdf4llm>=0.2 |
+| `MinerUParser` | `mineru` | pdf | magic-pdf>=0.6 |
 | `DirectParser` | `direct` | md, markdown, txt | 无 |
 
-切换 PDF 解析器：修改 `config/defaults.yaml` 中 `ingestion.parsers.pdf` 为 `pymupdf4llm`。
+切换 PDF 解析器：修改 `config/defaults.yaml` 中 `ingestion.parsers.pdf` 为 `pymupdf4llm` 或 `mineru`。
 
 **配置**（`settings.ingestion`）：
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `parsed_doc_dir` | `data/parsed_docs` | 解析后 Markdown 输出目录 |
 | `parsers` | `{pdf: docling, docx: docling, md: direct, ...}` | 文件扩展名 → 解析器名称映射 |
+| `mineru.device` | `cpu` | MinerU 设备: cpu / cuda / mps |
+| `mineru.models_dir` | `models/mineru` | MinerU 模型权重目录 |
 
 ### 会话模块
 

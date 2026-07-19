@@ -3,11 +3,13 @@
 from ingestion.parsers.base import BaseParser
 from ingestion.parsers.direct_parser import DirectParser
 from ingestion.parsers.docling_parser import DoclingParser
+from ingestion.parsers.mineru_parser import MinerUParser
 from ingestion.parsers.pymupdf4llm_parser import PyMuPDF4LLMParser
 
 _PARSER_CLASSES: dict[str, type[BaseParser]] = {
     "docling": DoclingParser,
     "pymupdf4llm": PyMuPDF4LLMParser,
+    "mineru": MinerUParser,
     "direct": DirectParser,
 }
 
@@ -34,6 +36,7 @@ __all__ = [
     "BaseParser",
     "DirectParser",
     "DoclingParser",
+    "MinerUParser",
     "PyMuPDF4LLMParser",
     "get_parser",
     "reset_parser_cache",

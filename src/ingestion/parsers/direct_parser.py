@@ -11,5 +11,5 @@ class DirectParser(BaseParser):
     name = "direct"
     supported_formats = ("md", "markdown", "txt")
 
-    def parse(self, source_path: Path) -> str:
+    def parse(self, source_path: Path, output_dir: Path | None = None) -> str:
         return source_path.read_text(encoding="utf-8")
