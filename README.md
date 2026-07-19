@@ -11,6 +11,7 @@
 | Embedding | BGE-large-zh-v1.5（本地） |
 | Reranker | BGE-Reranker v2-m3 Cross-Encoder（本地） |
 | LLM | Claude Sonnet 5 / Haiku 4.5（云端 API） |
+| 文档解析 | Docling / PyMuPDF4LLM / MinerU（可插拔） |
 | 会话存储 | SQLite |
 | 配置管理 | Pydantic v2 + YAML + 环境变量三级合并 |
 | 安全 | Fernet 内存加密 + 日志脱敏 |
@@ -57,11 +58,11 @@ rag0709/
 │   ├── session/                # ✅ SQLite 会话管理
 │   ├── query/                  # ✅ 查询理解层（意图分类/上下文融合/查询改写）
 │   ├── api/                    # ⬜ FastAPI 路由 & 中间件
-│   ├── core/                   # ⬜ RAG Pipeline 编排
-│   ├── retrieval/              # ⬜ 混合检索 + Rerank
-│   ├── generation/             # ⬜ Prompt 组装 + LLM 生成
-│   ├── ingestion/              # ⬜ 离线文档处理
-│   └── fallback/               # ⬜ 三级兜底
+│   ├── core/                   # ✅ RAG Pipeline 编排
+│   ├── retrieval/              # ✅ 混合检索 + Rerank
+│   ├── generation/             # ✅ Prompt 组装 + LLM 生成
+│   ├── ingestion/              # ✅ 离线文档处理（含 MinerU 解析）
+│   └── fallback/               # ✅ 三级兜底
 ├── models/                     # 模型文件（BGE 系列）
 ├── data/                       # 运行时数据（SQLite 等）
 ├── logs/                       # 日志文件
@@ -139,23 +140,71 @@ generation ──► answer, sources, confidence ──► core ──► api
 | **config** | ✅ | security（解密敏感配置） | 无 |
 | **session** | ✅ | config, models.Session | 无 — 由 query/core 驱动写入 |
 | **query** | ✅ | config.aliases, session.SessionManager, LLM | Pipeline 入口 |
-| **retrieval** | ⬜ | embedding/reranker 模型, Milvus/FAISS | query → `rewritten_queries`, `intent`, `collection` |
-| **generation** | ⬜ | config/prompts/, LLM | retrieval → `reranked`, query → `intent` |
-| **fallback** | ⬜ | config.web_search, 联网搜索 API | retrieval → `retrieval_eval` |
-| **core** | ⬜ | query, retrieval, generation, fallback, session | 串联所有模块，传递 PipelineContext |
+| **retrieval** | ✅ | embedding/reranker 模型, FAISS | query → `rewritten_queries`, `intent`, `collection` |
+| **generation** | ✅ | config/prompts/, LLM | retrieval → `reranked`, query → `intent` |
+| **fallback** | ✅ | config.web_search, 联网搜索 API | retrieval → `retrieval_eval` |
+| **core** | ✅ | query, retrieval, generation, fallback, session | 串联所有模块，传递 PipelineContext |
 | **api** | ⬜ | core, models.api_models | HTTP Request → 路由到 core |
-| **ingestion** | ⬜ | embedding 模型, FAISS, ARQ/Celery | 离线链路，写入向量库供 retrieval 使用 |
+| **ingestion** | ✅ | embedding 模型, FAISS, MinerU (可选) | 离线链路，写入向量库供 retrieval 使用 |
 
 ### 实现顺序约束
 
 ```
 第1期 ✅ models → config → session → query         （基础 + 查询理解）
-第2期 ⬜ retrieval → generation → fallback           （检索 + 生成 + 兜底）
-第3期 ⬜ core → api                                  （编排 + 对外接口）
-第4期 ⬜ ingestion                                   （离线文档处理，可与第2/3期并行）
+第2期 ✅ retrieval → generation → fallback           （检索 + 生成 + 兜底）
+第2期 ✅ core → ingestion → model/finetune           （编排 + 文档处理 + 微调）
+第3期 ⬜ api                                          （对外接口）
 ```
 
 关键约束：后续模块依赖 `PipelineContext` 中由上游填充的字段，必须按数据流顺序推进。
+
+## 文档解析引擎
+
+ingestion 模块支持可插拔解析器后端，通过 `config/defaults.yaml` 的 `ingestion.parsers` 按文件扩展名选择：
+
+| 解析器 | name | 支持格式 | 依赖 |
+|--------|------|----------|------|
+| DoclingParser | `docling` | pdf, docx, doc, pptx, ppt, html | docling>=2.0 |
+| PyMuPDF4LLMParser | `pymupdf4llm` | pdf | pymupdf4llm>=0.2 |
+| **MinerUParser** | `mineru` | pdf | magic-pdf>=0.6 |
+| DirectParser | `direct` | md, markdown, txt | 无 |
+
+### MinerU 解析器（新增）
+
+专为复杂排版 PDF（学术论文、技术手册、图文混排）优化：
+
+```yaml
+# config/defaults.yaml
+ingestion:
+  parsers:
+    pdf: mineru  # 从 docling 切换为 mineru
+  mineru:
+    device: cpu           # cpu | cuda | mps
+    models_dir: models/mineru
+```
+
+```python
+from ingestion.parsers import get_parser
+
+parser = get_parser("mineru")
+markdown = parser.parse("document.pdf", output_dir="output/")
+# 输出: output/document.md + output/document_images/*.jpg
+```
+
+**安装与模型下载**：
+
+```bash
+pip install magic-pdf[full-cpu] ultralytics doclayout-yolo rapidocr-onnxruntime rapid-table
+# 模型下载（从 HuggingFace 镜像）
+export HF_ENDPOINT=https://hf-mirror.com
+python -c "
+from modelscope import snapshot_download
+snapshot_download('opendatalab/PDF-Extract-Kit-1.0', cache_dir='models/mineru')
+"
+# 创建 magic-pdf.json 配置
+```
+
+首次运行时 MinerU 会自动下载 `hantian/layoutreader` 阅读顺序模型。
 
 ## 配置
 
