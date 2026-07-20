@@ -222,7 +222,7 @@ class ReActAgent:
         """构建本轮 LLM 调用的完整 prompt"""
         parts = [_SYSTEM_PROMPT, "", f"用户问题: {query}"]
 
-        # 注入历史痕迹
+        # 注入历史痕迹（含每轮的 observation）
         for t in traces:
             parts.append("")
             parts.append(f"THOUGHT: {t.thought}")
@@ -231,11 +231,6 @@ class ReActAgent:
                 parts.append(f"QUERY: {t.query}")
             if t.observation:
                 parts.append(t.observation)
-
-        # 注入上一轮 Observation（如果有新结果）
-        if observation:
-            parts.append("")
-            parts.append(observation)
 
         return "\n".join(parts)
 

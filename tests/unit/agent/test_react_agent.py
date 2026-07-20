@@ -146,8 +146,8 @@ class TestReActAgent:
         assert result.react_traces[1].action == "finish"
 
     @pytest.mark.asyncio
-    async def test_llm_format_error_triggers_retry_then_finish(self, programmable_llm, agent_config):
-        """LLM 格式错误后重试，退化为 FINISH"""
+    async def test_llm_format_error_force_finish(self, programmable_llm, agent_config):
+        """LLM 输出格式异常时直接结束，不重试"""
         llm = programmable_llm([
             "随便写的一段话，没有格式",                              # 解析失败
             "THOUGHT: 正确格式\nACTION: FINISH",                    # 正常结束
