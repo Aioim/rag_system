@@ -23,12 +23,22 @@
 
 __version__ = "1.1.0"
 
-from .downloader import ModelDownloader
+from .downloader import (
+    AutoStrategy,
+    DownloadStrategy,
+    HfStrategy,
+    ModelDownloader,
+    MsStrategy,
+)
 from .manager import ModelManager, models
 
 __all__ = [
+    "AutoStrategy",
+    "DownloadStrategy",
+    "HfStrategy",
     "ModelDownloader",
     "ModelManager",
+    "MsStrategy",
     "__version__",
     "models",
 ]
