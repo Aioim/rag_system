@@ -27,7 +27,13 @@ class TestPipelineReactMode:
     @pytest.fixture(autouse=True)
     def cleanup_singletons(self):
         """重置所有全局单例，保证测试隔离"""
+        from agent import reset_react_agent
+        from core import reset_rag_pipeline
+        reset_rag_pipeline()
+        reset_react_agent()
         yield
+        reset_rag_pipeline()
+        reset_react_agent()
         from agent import reset_react_agent
         from core import reset_rag_pipeline
         from retrieval import reset_retrieval_layer
