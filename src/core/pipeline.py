@@ -49,10 +49,32 @@ class RAGPipeline:
         query: str,
         session_id: str | None = None,
         collection: str = "default",
+        mode: str = "linear",
+        max_iterations: int = 5,
+        show_reasoning: bool = False,
     ) -> PipelineContext:
-        """执行完整 RAG 问答链路"""
+        """执行完整 RAG 问答链路
+
+        Args:
+            query: 用户问题
+            session_id: 会话 ID（多轮对话使用）
+            collection: 知识库集合名称
+            mode: 运行模式 ("linear" | "react")
+            max_iterations: ReAct 最大迭代次数
+            show_reasoning: 是否在 metadata 中保留推理过程
+
+        Returns:
+            PipelineContext
+        """
         t0 = time.perf_counter()
         ctx = PipelineContext(query=query, collection=collection)
+        ctx.mode = mode
+        ctx.max_iterations = max_iterations
+
+        if mode == "react":
+            return await self._run_react(
+                query, session_id, collection, max_iterations, show_reasoning
+            )
 
         # ---- 1. 查询理解 ------------------------------------------------
         try:
@@ -127,6 +149,199 @@ class RAGPipeline:
                 return True
 
         return False
+
+    async def _run_react(
+        self,
+        query: str,
+        session_id: str | None,
+        collection: str,
+        max_iterations: int,
+        show_reasoning: bool,
+    ) -> PipelineContext:
+        """ReAct Agent 分支
+
+        ReAct 模式跳过查询理解层（Agent 自行推理），
+        走 Agent 循环 → 合并检索 → 自评 → 兜底 → 生成 → 会话记录。
+        """
+        from agent import get_react_agent
+        from retrieval.evaluator import evaluate as self_evaluate
+
+        t0 = time.perf_counter()
+        ctx = PipelineContext(
+            query=query, collection=collection,
+            mode="react", max_iterations=max_iterations,
+        )
+        ctx.original_query = query
+
+        # ---- 1. 别名映射 ------------------------------------------------
+        try:
+            from config.aliases import resolve_aliases_in_text
+            query = resolve_aliases_in_text(query)
+            ctx.query = query
+        except Exception:
+            logger.warning("ReAct 别名映射失败，使用原始 query")
+
+        # ---- 2. ReAct Agent 循环 ----------------------------------------
+        try:
+            agent = get_react_agent(self._llm, None, None)
+            result = await agent.run(query, collection)
+        except Exception:
+            logger.exception("ReAct Agent 异常，降级到 linear 模式")
+            return await self.run(
+                query, session_id, collection, mode="linear"
+            )
+
+        ctx.react_traces = result.react_traces
+        ctx.reranked = result.reranked
+
+        # ---- 3. 合并检索（Agent 所有 search query 统一用 RetrievalLayer 重新检索）--
+        search_queries = [
+            t.query for t in result.react_traces
+            if t.action == "search" and t.query
+        ]
+        web_searched = any(
+            t.action == "web_search" for t in result.react_traces
+        )
+
+        if search_queries and not ctx.reranked:
+            try:
+                ctx.rewritten_queries = list(dict.fromkeys(search_queries))
+                ctx = await self.retrieval_layer.retrieve(ctx)
+            except Exception:
+                logger.exception("ReAct 合并检索异常")
+
+        # ---- 4. 检索自评 + 兜底（仅当 Agent 实际执行过检索） --------------
+        agent_did_search = bool(search_queries) or web_searched
+        if agent_did_search:
+            if ctx.retrieval_eval is None:
+                ctx.retrieval_eval = self_evaluate(ctx.reranked)
+
+            if ctx.retrieval_eval is RetrievalEval.INSUFFICIENT and not web_searched:
+                try:
+                    ctx = await self.fallback.handle(ctx)
+                except Exception:
+                    logger.exception("ReAct 兜底异常")
+
+            need_short_circuit = await self._apply_fallback(ctx, t0, query, session_id)
+            if need_short_circuit:
+                return ctx
+
+        # ---- 5. 生成 ----------------------------------------------------
+        try:
+            ctx = await self.generation_layer.generate(ctx)
+        except Exception:
+            logger.exception("ReAct 生成层异常")
+            self.fallback.no_answer(ctx)
+
+        # ---- 6. 记录 ----------------------------------------------------
+        self._record_elapsed(ctx, t0)
+        if show_reasoning:
+            ctx.metadata["react_traces"] = [
+                {
+                    "iteration": t.iteration,
+                    "thought": t.thought,
+                    "action": t.action,
+                    "query": t.query,
+                    "elapsed_ms": t.elapsed_ms,
+                }
+                for t in result.react_traces
+            ]
+        await self._save_to_session(session_id, query, ctx.answer)
+        return ctx
+
+    async def run_stream(
+        self,
+        query: str,
+        session_id: str | None = None,
+        collection: str = "default",
+        mode: str = "linear",
+        max_iterations: int = 5,
+        show_reasoning: bool = False,
+    ):
+        """流式执行 RAG Pipeline，支持 ReAct 事件推送
+
+        Phase 1: 透传 ReActAgent.run_stream() 事件（含过滤）
+        Phase 2: 合并检索 → 生成 → done 事件
+
+        Yields:
+            SSEEvent
+        """
+        from agent.react_agent import SSEEvent
+
+        if mode != "react":
+            yield SSEEvent("done", {
+                "answer": "streaming only supported for react mode",
+                "sources": [], "confidence": 0.0,
+            })
+            return
+
+        t0 = time.perf_counter()
+        search_queries: list[str] = []
+        web_searched = False
+
+        # 1. 别名映射
+        try:
+            from config.aliases import resolve_aliases_in_text
+            query = resolve_aliases_in_text(query)
+        except Exception:
+            logger.warning("流式别名映射失败")
+
+        # 2. Agent 流式循环：收集事件 + 透传
+        try:
+            from agent import get_react_agent
+            agent = get_react_agent(self._llm, None, None)
+            async for event in agent.run_stream(query, collection):
+                # 收集 search query 用于后续合并检索
+                if event.event == "action" and event.data.get("action") == "search":
+                    sq = event.data.get("query", "")
+                    if sq:
+                        search_queries.append(sq)
+                if event.event == "action" and event.data.get("action") == "web_search":
+                    web_searched = True
+                # 过滤
+                if not show_reasoning and event.event in ("thought", "action", "observation"):
+                    continue
+                yield event
+        except Exception:
+            logger.exception("ReAct Agent 流式异常")
+            yield SSEEvent("done", {"answer": "", "sources": [], "confidence": 0.0})
+            return
+
+        # 3. 合并检索（用 Agent 搜过的所有 query）
+        ctx = PipelineContext(query=query, collection=collection, mode="react")
+        if search_queries:
+            try:
+                ctx.rewritten_queries = list(dict.fromkeys(search_queries))
+                ctx = await self.retrieval_layer.retrieve(ctx)
+            except Exception:
+                logger.exception("流式合并检索异常")
+
+        # 4. 兜底（INSUFFICIENT 且 Agent 未 web_search → 联网）
+        if ctx.retrieval_eval is RetrievalEval.INSUFFICIENT and not web_searched:
+            try:
+                ctx = await self.fallback.handle(ctx)
+            except Exception:
+                logger.exception("流式兜底异常")
+
+        # 5. 生成
+        try:
+            ctx = await self.generation_layer.generate(ctx)
+        except Exception:
+            logger.exception("流式生成异常")
+            self.fallback.no_answer(ctx)
+
+        self._record_elapsed(ctx, t0)
+        await self._save_to_session(session_id, query, ctx.answer)
+
+        yield SSEEvent("done", {
+            "answer": ctx.answer,
+            "sources": [
+                {"doc_id": s.doc_id, "doc_title": s.doc_title,
+                 "chunk_text": s.chunk_text[:200], "score": s.score}
+                for s in (ctx.sources or [])
+            ],
+            "confidence": ctx.confidence,
+        })
 
     @staticmethod
     def _record_elapsed(ctx: PipelineContext, t0: float) -> None:
