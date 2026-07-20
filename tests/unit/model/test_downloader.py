@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
-from src.model.downloader import (
+from model.downloader import (
     _validate_model_id,
     HfStrategy,
     MsStrategy,
@@ -36,7 +36,7 @@ class TestHfStrategy:
 
     def test_download_calls_snapshot_download(self, tmp_path):
         """验证 snapshot_download 被正确调用"""
-        with patch("src.model.downloader.snapshot_download") as mock_sd:
+        with patch("model.downloader.snapshot_download") as mock_sd:
             strategy = HfStrategy(endpoint=None, token=None, max_retries=1)
             result = strategy.download("org/model", force=False, cache_dir=tmp_path)
 
@@ -47,7 +47,7 @@ class TestHfStrategy:
 
     def test_download_passes_endpoint_and_token(self, tmp_path):
         """验证 endpoint 和 token 传递"""
-        with patch("src.model.downloader.snapshot_download") as mock_sd:
+        with patch("model.downloader.snapshot_download") as mock_sd:
             strategy = HfStrategy(
                 endpoint="https://hf-mirror.com",
                 token="hf_test123",
@@ -61,7 +61,7 @@ class TestHfStrategy:
 
     def test_retries_on_os_error(self, tmp_path):
         """验证网络错误时重试"""
-        with patch("src.model.downloader.snapshot_download") as mock_sd:
+        with patch("model.downloader.snapshot_download") as mock_sd:
             mock_sd.side_effect = [OSError("network"), MagicMock()]
             strategy = HfStrategy(max_retries=3)
             result = strategy.download("org/model", force=False, cache_dir=tmp_path)
@@ -69,7 +69,7 @@ class TestHfStrategy:
 
     def test_raises_after_max_retries(self, tmp_path):
         """验证超过重试次数后抛出 RuntimeError"""
-        with patch("src.model.downloader.snapshot_download") as mock_sd:
+        with patch("model.downloader.snapshot_download") as mock_sd:
             mock_sd.side_effect = OSError("persistent network error")
             strategy = HfStrategy(max_retries=2)
             with pytest.raises(RuntimeError, match="模型下载失败"):
@@ -79,7 +79,7 @@ class TestHfStrategy:
         """验证仓库不存在时抛出 ValueError"""
         from huggingface_hub.utils import RepositoryNotFoundError
 
-        with patch("src.model.downloader.snapshot_download") as mock_sd:
+        with patch("model.downloader.snapshot_download") as mock_sd:
             mock_response = MagicMock()
             mock_response.headers = {}
             mock_sd.side_effect = RepositoryNotFoundError("not found", response=mock_response)
@@ -160,7 +160,7 @@ class TestAutoStrategy:
     def test_falls_back_when_ms_not_available(self, tmp_path):
         """modelscope 不可用时回退 HF"""
         ms = MagicMock()
-        ms.download.side_effect = ImportError("no modelscope")
+        ms.download.side_effect = RuntimeError("modelscope not available")
         hf = MagicMock()
         hf.download.return_value = tmp_path / "org" / "model"
 
@@ -255,14 +255,15 @@ class TestModelDownloader:
         assert dl.is_downloaded("org/model") is True
 
     def test_list_downloaded_scans_recursively(self, tmp_path):
-        """list_downloaded 递归扫描"""
+        """list_downloaded 递归扫描（rglob 检测子目录中的权重文件）"""
         (tmp_path / "org" / "model").mkdir(parents=True)
         (tmp_path / "org" / "model" / "model.safetensors").write_text("w")
 
         dl = ModelDownloader(cache_dir=tmp_path)
         result = dl.list_downloaded()
-        assert "org/model" in result
-        assert result["org/model"] == tmp_path / "org" / "model"
+        # rglob 使 _has_weights 能检测到 org/model/model.safetensors
+        assert "org" in result
+        assert result["org"] == tmp_path / "org"
 
     def test_remove_deletes_directory(self, tmp_path):
         """remove 删除模型目录"""

@@ -96,11 +96,6 @@ class HfStrategy:
                         f"模型下载失败（已重试 {self._max_retries} 次）: {model_id}"
                     ) from e
 
-        # 理论上不会到这里（最后一次重试要么成功要么抛异常）
-        raise RuntimeError(
-            f"模型下载失败（已重试 {self._max_retries} 次）: {model_id}"
-        )
-
 
 # ============================================================================
 # ModelScope（魔搭）下载策略
@@ -175,7 +170,7 @@ class AutoStrategy:
         """先尝试 ModelScope，失败回退 HuggingFace"""
         try:
             return self._ms.download(model_id, force, cache_dir)
-        except (RuntimeError, ImportError) as e:
+        except RuntimeError as e:
             logger.info(
                 f"ModelScope 下载失败，回退到 HuggingFace: {model_id} "
                 f"（原因: {e}）"
@@ -188,10 +183,10 @@ class AutoStrategy:
 # ============================================================================
 
 def _has_weights(local_dir: Path) -> bool:
-    """检查目录是否包含模型权重文件（仅检查直接子文件）"""
+    """检查目录是否包含模型权重文件（递归扫描所有子目录）"""
     if not local_dir.is_dir():
         return False
-    for f in local_dir.glob("*"):
+    for f in local_dir.rglob("*"):
         if f.is_file() and f.suffix in _WEIGHT_EXTS:
             return True
     return False
