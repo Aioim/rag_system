@@ -1,5 +1,4 @@
 """ReActAgent 核心循环单元测试"""
-import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from agent.tools import SearchTool, WebSearchTool, ToolResult
@@ -162,3 +161,51 @@ class TestReActAgent:
         assert result.total_iterations == 1
         assert result.react_traces[0].action == "finish"  # 解析失败退化为 FINISH
         assert "格式" in result.react_traces[0].thought
+
+
+class TestReActAgentStream:
+    """ReActAgent 流式输出测试"""
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_all_events(self, programmable_llm, agent_config):
+        """流式模式推送完整的 react_start → thought → action → observation → react_end 事件"""
+        llm = programmable_llm([
+            "THOUGHT: 需要搜索\nACTION: search\nQUERY: RAG架构",
+            "THOUGHT: 信息充分\nACTION: FINISH",
+        ])
+        search = _make_search_tool([
+            [{"doc_id": "d1", "text": "RAG是检索增强生成"}]
+        ])
+        web = _make_web_search_tool()
+        from agent.react_agent import ReActAgent
+        agent = ReActAgent(llm, search, web, agent_config)
+
+        events = []
+        async for e in agent.run_stream("什么是RAG？", "default"):
+            events.append(e)
+
+        event_names = [e.event for e in events]
+        assert "react_start" in event_names
+        assert "thought" in event_names
+        assert "action" in event_names
+        assert "observation" in event_names
+        assert "react_end" in event_names
+
+    @pytest.mark.asyncio
+    async def test_stream_react_end_has_stats(self, programmable_llm, agent_config):
+        """react_end 事件包含 total_iterations 和 total_elapsed_ms"""
+        llm = programmable_llm([
+            "THOUGHT: 直接回答\nACTION: FINISH",
+        ])
+        search = _make_search_tool()
+        web = _make_web_search_tool()
+        from agent.react_agent import ReActAgent
+        agent = ReActAgent(llm, search, web, agent_config)
+
+        events = []
+        async for e in agent.run_stream("hello", "default"):
+            events.append(e)
+
+        react_end = [e for e in events if e.event == "react_end"][0]
+        assert react_end.data["total_iterations"] == 1
+        assert "total_elapsed_ms" in react_end.data

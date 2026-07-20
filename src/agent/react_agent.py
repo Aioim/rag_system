@@ -2,6 +2,7 @@
 import logging
 import re
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -67,6 +68,13 @@ class AgentResult:
     react_traces: list = field(default_factory=list)  # list[ReActTrace]
     total_iterations: int = 0
     total_elapsed_ms: float = 0.0
+
+
+@dataclass
+class SSEEvent:
+    """SSE 流式事件"""
+    event: str   # "react_start" | "thought" | "action" | "observation" | "react_end"
+    data: dict[str, Any]
 
 
 # ---- System Prompt ----------------------------------------------------------
@@ -213,6 +221,123 @@ class ReActAgent:
             total_iterations=len(traces),
             total_elapsed_ms=(time.perf_counter() - t0) * 1000,
         )
+
+    async def run_stream(
+        self, query: str, collection: str
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """流式执行 ReAct 循环，逐事件推送"""
+        from models.react_trace import ReActTrace
+
+        t0 = time.perf_counter()
+        traces: list[ReActTrace] = []
+        observation: str | None = None
+        seen_pairs: set[tuple[str, str]] = set()
+        consecutive_dup_count = 0
+
+        yield SSEEvent("react_start", {"mode": "react", "query": query})
+
+        for iteration in range(1, self._config.max_iterations + 1):
+            t_iter = time.perf_counter()
+
+            # LLM 决策
+            prompt = self._build_prompt(query, traces, observation)
+            raw = await self._call_llm(prompt)
+            parsed = parse_react_output(raw)
+
+            if "parse_error" in parsed:
+                trace = ReActTrace(
+                    iteration=iteration,
+                    thought=f"LLM 输出格式异常: {parsed['parse_error']}，强制结束",
+                    action="finish",
+                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+                )
+                traces.append(trace)
+                yield SSEEvent("thought", {
+                    "iteration": iteration,
+                    "thought": trace.thought,
+                    "action": "finish",
+                })
+                break
+
+            action = parsed["action"]
+            search_query = parsed.get("query")
+
+            # 连续重复检测
+            pair_key = (action, search_query or "")
+            if pair_key in seen_pairs:
+                consecutive_dup_count += 1
+                if consecutive_dup_count >= self._config.max_consecutive_duplicates:
+                    yield SSEEvent("thought", {
+                        "iteration": iteration,
+                        "thought": f"连续 {consecutive_dup_count} 轮重复，终止循环",
+                        "action": "finish",
+                    })
+                    break
+            else:
+                consecutive_dup_count = 0
+            seen_pairs.add(pair_key)
+
+            # 推送 thought 事件
+            yield SSEEvent("thought", {
+                "iteration": iteration,
+                "thought": parsed["thought"],
+                "action": action,
+            })
+
+            if action == "finish":
+                trace = ReActTrace(
+                    iteration=iteration,
+                    thought=parsed["thought"],
+                    action="finish",
+                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+                )
+                traces.append(trace)
+                break
+
+            # 最后一轮强制结束
+            if iteration == self._config.max_iterations:
+                trace = ReActTrace(
+                    iteration=iteration,
+                    thought=f"已达到最大迭代次数 ({self._config.max_iterations})，强制结束",
+                    action="finish",
+                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+                )
+                traces.append(trace)
+                break
+
+            # 推送 action 事件
+            yield SSEEvent("action", {
+                "iteration": iteration,
+                "action": action,
+                "query": search_query,
+            })
+
+            # 执行工具
+            tool_result = await self._execute_tool(action, search_query or "", collection)
+            observation = self._format_observation(tool_result)
+
+            # 推送 observation 事件
+            yield SSEEvent("observation", {
+                "iteration": iteration,
+                "chunk_count": tool_result.chunk_count,
+                "elapsed_ms": round(tool_result.elapsed_ms, 2),
+            })
+
+            trace = ReActTrace(
+                iteration=iteration,
+                thought=parsed["thought"],
+                action=action,
+                query=search_query,
+                observation=observation,
+                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+            )
+            traces.append(trace)
+
+        total_elapsed = (time.perf_counter() - t0) * 1000
+        yield SSEEvent("react_end", {
+            "total_iterations": len(traces),
+            "total_elapsed_ms": round(total_elapsed, 2),
+        })
 
     # ---- 内部方法 ----------------------------------------------------------
 
