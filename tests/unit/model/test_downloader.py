@@ -80,7 +80,9 @@ class TestHfStrategy:
         from huggingface_hub.utils import RepositoryNotFoundError
 
         with patch("src.model.downloader.snapshot_download") as mock_sd:
-            mock_sd.side_effect = RepositoryNotFoundError("not found", response=None)
+            mock_response = MagicMock()
+            mock_response.headers = {}
+            mock_sd.side_effect = RepositoryNotFoundError("not found", response=mock_response)
             strategy = HfStrategy(max_retries=1)
             with pytest.raises(ValueError, match="模型仓库不存在"):
                 strategy.download("org/nonexistent", force=False, cache_dir=tmp_path)
@@ -98,7 +100,10 @@ class TestMsStrategy:
     def test_download_calls_modelscope_snapshot(self, tmp_path):
         """验证调用 modelscope.snapshot_download"""
         mock_ms = MagicMock()
-        mock_ms_sd = MagicMock(return_value=str(tmp_path / ".modelscope" / "org--model"))
+        mock_tmp_dir = tmp_path / ".modelscope" / "org--model"
+        mock_tmp_dir.mkdir(parents=True)
+        (mock_tmp_dir / "model.safetensors").write_text("weight")
+        mock_ms_sd = MagicMock(return_value=str(mock_tmp_dir))
         mock_ms.snapshot_download = mock_ms_sd
 
         with patch.dict("sys.modules", {"modelscope": mock_ms}):
