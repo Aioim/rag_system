@@ -79,7 +79,7 @@ class MinerUParser(BaseParser):
             if cls._initialized:
                 return
             try:
-                import magic_pdf.model as model_config  # noqa: F401
+                import magic_pdf.model as model_config  # 副作用：加载 mineru 模型配置
             except ImportError:
                 raise ImportError(
                     "MinerU (magic-pdf) 未安装。请运行: pip install magic-pdf[full-cpu]"

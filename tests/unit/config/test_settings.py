@@ -27,10 +27,10 @@ class TestPathNormalization:
             (LogConfig, "log_dir", "logs"),
             (FaissConfig, "index_dir", "data/faiss_indexes"),
             (AliasConfig, "file_path", "config/aliases.yaml"),
-            (ModelConfig, "cache_dir", "models"),
+            (ModelConfig, "cache_dir", "local_models"),
             (IngestionConfig, "parsed_doc_dir", "data/parsed_docs"),
             (FinetuneConfig, "data_dir", "data/finetune"),
-            (FinetuneConfig, "output_dir", "models/finetuned"),
+            (FinetuneConfig, "output_dir", "local_models/finetuned"),
         ],
     )
     def test_relative_path_resolved_to_project_root(self, cfg_cls, field, rel):

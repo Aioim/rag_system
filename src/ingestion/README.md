@@ -74,7 +74,7 @@ Parser → Chunker → Embedder → FAISSIndexWriter
 ## 解析器配置
 
 ```yaml
-# config/defaults.yaml
+# config/{env}.yaml
 ingestion:
   parsed_doc_dir: data/parsed_docs       # 解析后 .md 文件目录
   parsers:
@@ -83,7 +83,7 @@ ingestion:
     txt: direct
   mineru:                                 # MinerU 专用配置
     device: cpu
-    models_dir: models/mineru
+    models_dir: local_models/mineru
 ```
 
 ## Chunker 策略

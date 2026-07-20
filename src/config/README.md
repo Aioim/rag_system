@@ -7,7 +7,6 @@ Config 模块是 RAG 系统的统一配置中心，覆盖检索、分块、Embed
 - **多源合并**：`{env}.yaml` → 环境变量 → CLI 覆盖，三级优先级
 - **类型安全**：Pydantic v2 模型验证
 - **热重载**：`settings.reload()` 运行时重载
-- **别名映射**：用户术语 → 标准术语自动转换
 
 ## 文件结构
 
@@ -26,14 +25,13 @@ rag0709/
     ├── __init__.py          # 导出
     ├── settings.py          # 配置模型 + ConfigManager
     ├── yaml_loader.py       # YAML 多环境合并 + 缓存
-    ├── aliases.py           # 别名管理器
     └── path.py              # PROJECT_ROOT
 ```
 
 ## 快速开始
 
 ```python
-from config import settings, resolve_alias
+from config import settings
 
 # 访问配置
 settings.retrieval.top_k        # 5
@@ -42,9 +40,6 @@ settings.llm.default            # deepseek-v4-pro
 
 # 点号路径
 settings.get('retrieval.rrf_k')  # 60
-
-# 别名映射
-resolve_alias("工资条")          # "薪资明细"
 
 # CLI 覆盖
 settings.apply_overrides('retrieval.top_k=10,debug=true')
@@ -86,7 +81,6 @@ MILVUS__HOST=192.168.1.100
 | `finetune` | training/lora/distillation 超参 | 模型微调 & 蒸馏 |
 | `fallback` | max_retrieval_rounds, no_answer_message | 兜底策略 |
 | `api` | host, port, cors_origins | API 服务 |
-| `aliases` | auto_reload | 别名映射 |
 | `log` | log_level, log_file, max_bytes, backup_count | 日志 |
 
 ## 多环境配置

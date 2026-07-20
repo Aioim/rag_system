@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from logger import logger
 from models.enums import Intent
+from models.json_utils import extract_json_container
 from models.llm import LLMProtocol
 
 
@@ -96,88 +97,5 @@ class IntentClassifier:
 
     @staticmethod
     def _extract_json(raw: str) -> str | None:
-        """从 LLM 响应中提取最外层 JSON 对象。
-
-        优先尝试直接解析整个响应（快速路径），
-        失败后降级到括号计数提取。
-        """
-        stripped = raw.strip()
-        # 快速路径：整个响应就是合法 JSON
-        if stripped.startswith("{"):
-            try:
-                json.loads(stripped)
-                return stripped
-            except json.JSONDecodeError:
-                pass
-
-        # 慢速路径：括号计数提取最外层 JSON
-        start = raw.find("{")
-        if start == -1:
-            return None
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start, len(raw)):
-            ch = raw[i]
-            if escape:
-                escape = False
-                continue
-            if ch == "\\":
-                escape = True
-                continue
-            if ch == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return raw[start:i + 1]
-        return None
-
-
-# ============================================================================
-# 自测：用 Mock LLM 演示意图分类 + 清晰度判断
-# ============================================================================
-if __name__ == "__main__":
-    import asyncio
-    from types import SimpleNamespace
-
-    class _MockLLM:
-        """模拟 LLM — 根据 query 关键词返回不同分类结果"""
-
-        async def ainvoke(self, prompt, **_kw):
-            query = prompt.split("用户问题：")[-1].strip() if "用户问题：" in prompt else ""
-            if any(w in query for w in ("如何", "怎么", "步骤", "申请")):
-                return SimpleNamespace(content='{"intent": "procedure", "is_clear": true, "clarification_question": null}')
-            if any(w in query for w in ("区别", "对比", "哪个好")):
-                return SimpleNamespace(content='{"intent": "compare", "is_clear": true, "clarification_question": null}')
-            if any(w in query for w in ("帮帮我", "救救我")):
-                return SimpleNamespace(content='{"intent": "concept", "is_clear": false, "clarification_question": "您想了解什么内容？"}')
-            return SimpleNamespace(content='{"intent": "concept", "is_clear": true, "clarification_question": null}')
-
-
-    async def main():
-        classifier = IntentClassifier(_MockLLM())
-        queries = [
-            "什么是RAG？",
-            "如何申请年假？",
-            "区别TCP和UDP",
-            "帮帮我",
-        ]
-        print("=" * 60)
-        print("IntentClassifier 自测")
-        print("=" * 60)
-        for q in queries:
-            r = await classifier.classify(q)
-            clear = "清晰" if r.is_clear else "模糊"
-            print(f"  Query: {q}")
-            print(f"    → intent={r.intent.value}, is_clear={clear}")
-            if r.clarification_question:
-                print(f"    → 澄清追问: {r.clarification_question}")
-            print()
-
-    asyncio.run(main())
+        """从 LLM 响应中提取最外层 JSON 对象。"""
+        return extract_json_container(raw, "{", "}")

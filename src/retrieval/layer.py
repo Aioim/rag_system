@@ -33,18 +33,26 @@ class RetrievalLayer:
         self._cross_encoder = cross_encoder
         self._bm25_cache: dict[str, BM25Retriever] = {}
         self._bm25_lock = threading.Lock()
+        self._encoder_lock = threading.Lock()
+        self._cross_encoder_lock = threading.Lock()
 
     # ---- 懒加载 --------------------------------------------------------
 
     def _get_encoder(self) -> "SentenceTransformer":
-        if self._encoder is None:
-            self._encoder = load_embedding_model()
-        return self._encoder
+        if self._encoder is not None:
+            return self._encoder
+        with self._encoder_lock:
+            if self._encoder is None:
+                self._encoder = load_embedding_model()
+            return self._encoder
 
     def _get_cross_encoder(self) -> "CrossEncoder":
-        if self._cross_encoder is None:
-            self._cross_encoder = load_cross_encoder()
-        return self._cross_encoder
+        if self._cross_encoder is not None:
+            return self._cross_encoder
+        with self._cross_encoder_lock:
+            if self._cross_encoder is None:
+                self._cross_encoder = load_cross_encoder()
+            return self._cross_encoder
 
     def _get_bm25(self, store: FAISSStore) -> BM25Retriever:
         """按 collection 缓存；store 热重载（version 变化）后重建"""
@@ -87,38 +95,60 @@ class RetrievalLayer:
 
         cfg = settings.retrieval
         effective_top_k = top_k if top_k is not None else cfg.top_k
-        loop = asyncio.get_running_loop()
 
         # store 加载（faiss IO）与 BM25 构建/模型加载均为重活，走线程池
-        store = await loop.run_in_executor(None, get_store, ctx.collection)
+        store = await asyncio.to_thread(get_store, ctx.collection)
         if store.is_empty:
             ctx.candidates, ctx.reranked = [], []
             ctx.retrieval_eval = RetrievalEval.INSUFFICIENT
             return ctx
 
         # 三者相互独立，并行加载（冷启动时模型加载为秒级重活）
-        encoder, cross_encoder, bm25 = await asyncio.gather(
-            loop.run_in_executor(None, self._get_encoder),
-            loop.run_in_executor(None, self._get_cross_encoder),
-            loop.run_in_executor(None, self._get_bm25, store),
+        # return_exceptions=True 确保单点失败不取消其余并行加载
+        results = await asyncio.gather(
+            asyncio.to_thread(self._get_encoder),
+            asyncio.to_thread(self._get_cross_encoder),
+            asyncio.to_thread(self._get_bm25, store),
+            return_exceptions=True,
         )
+        encoder_raw, cross_encoder_raw, bm25_raw = results
+
+        encoder_failed = isinstance(encoder_raw, BaseException)
+        cross_encoder_failed = isinstance(cross_encoder_raw, BaseException)
+        bm25_failed = isinstance(bm25_raw, BaseException)
+
+        if encoder_failed:
+            logger.error("Encoder 加载失败，检索不可用: %s", encoder_raw)
+            ctx.candidates, ctx.reranked = [], []
+            ctx.retrieval_eval = RetrievalEval.INSUFFICIENT
+            return ctx
+        if cross_encoder_failed:
+            logger.error("CrossEncoder 加载失败，将跳过精排: %s", cross_encoder_raw)
+        if bm25_failed:
+            logger.error("BM25 构建失败，仅使用向量检索: %s", bm25_raw)
+
+        encoder = encoder_raw
+        cross_encoder = cross_encoder_raw if not cross_encoder_failed else None
+        bm25 = bm25_raw if not bm25_failed else None
         vector = VectorRetriever(store, encoder)
 
         # 1. 每条 query 并行两路召回，每路 top_k×2
         queries = ctx.rewritten_queries or [ctx.query]
         recall_k = effective_top_k * 2
         t0 = time.perf_counter()
+        loop = asyncio.get_running_loop()
         tasks = []
         for q in queries:
             tasks.append(loop.run_in_executor(
                 None, self._safe_retrieve, vector, q, recall_k, "vector"))
-            tasks.append(loop.run_in_executor(
-                None, self._safe_retrieve, bm25, q, recall_k, "bm25"))
+            if bm25 is not None:
+                tasks.append(loop.run_in_executor(
+                    None, self._safe_retrieve, bm25, q, recall_k, "bm25"))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         ranked_lists = []
         for r in results:
             if isinstance(r, BaseException):
-                if isinstance(r, (KeyboardInterrupt, SystemExit)):
+                if isinstance(r, (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)):
                     raise r
                 # _safe_retrieve 已捕获 Exception，此处兜底其余 BaseException，避免丢弃已成功的召回路
                 logger.error("召回任务异常: %s", r)
@@ -147,14 +177,18 @@ class RetrievalLayer:
 
         # 4. CrossEncoder 精排（对融合后的标准问法 ctx.query）+ MMR 截断
         t2 = time.perf_counter()
-        reranker = Reranker(cross_encoder)
-        reranked = await loop.run_in_executor(
-            None, reranker.rerank, ctx.query, candidates
-        )
-        vectors = await loop.run_in_executor(
-            None, self._reconstruct_vectors, store, reranked
-        )
-        ctx.reranked = mmr_select(reranked, vectors, effective_top_k, cfg.mmr_lambda)
+        if cross_encoder is not None:
+            reranker = Reranker(cross_encoder)
+            reranked = await asyncio.to_thread(
+                reranker.rerank, ctx.query, candidates
+            )
+            vectors = await asyncio.to_thread(
+                self._reconstruct_vectors, store, reranked
+            )
+            ctx.reranked = mmr_select(reranked, vectors, effective_top_k, cfg.mmr_lambda)
+        else:
+            # CrossEncoder 不可用时，直接用 RRF 融合结果截断
+            ctx.reranked = candidates[:effective_top_k]
         ctx.metadata["retrieval_rerank_ms"] = (time.perf_counter() - t2) * 1000
 
         # 5. Self-RAG 自评

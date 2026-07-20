@@ -82,9 +82,10 @@ rag0709/
 │   │   └── filters.py         # SensitiveDataFilter + SecurityAuditFilter
 │   ├── models/                # ✅ 共享数据模型（PipelineContext/Chunk/Session/API）
 │   ├── session/               # ✅ SQLite 会话管理（详见 src/session/README.md）
-│   ├── query/                 # ✅ 查询理解层（意图分类/上下文融合/查询改写）
+│   ├── query/                 # ✅ 查询理解层（别名映射/意图分类/上下文融合/查询改写）
 │   │   ├── __init__.py          # 导出 + get_query_layer 单例工厂
 │   │   ├── layer.py             # QueryUnderstandingLayer — Pipeline 主编排器
+│   │   ├── aliases.py           # AliasManager — 多别名+多含义消歧
 │   │   ├── intent_classifier.py # IntentClassifier — 意图分类 + 清晰度判断
 │   │   ├── context_fuser.py     # ContextFuser — 多轮指代消解 + 追问补全
 │   │   └── rewriters/           # 查询改写器（并行执行，合并去重）
@@ -154,13 +155,12 @@ rag0709/
 ### 配置系统
 
 ```python
-from config import settings, resolve_alias
+from config import settings
 
 settings.retrieval.top_k          # 访问配置
 settings.get("retrieval.rrf_k")   # 点号路径访问
 settings.apply_overrides("retrieval.top_k=10")  # CLI 覆盖
 settings.reload()                 # 热重载
-resolve_alias("工资条")           # → "薪资明细"
 ```
 
 配置优先级：**CLI 覆盖 > 环境变量(`RETRIEVAL__TOP_K=10`) > `{env}.yaml` > 代码默认值**
@@ -256,6 +256,18 @@ reset_query_layer()
 ```
 
 **Pipeline 流程**：别名映射 → 意图分类+清晰度判断 → 多轮上下文融合 → 查询改写(并行)
+
+别名映射独立使用：
+
+```python
+from query.aliases import resolve_alias, resolve_aliases_in_text, alias_manager
+
+resolve_alias("工资条")                              # → "薪资明细"
+resolve_alias("系统", context_text="IT系统登录")       # → "内部系统"（context消歧）
+resolve_alias("系统")                                 # → "系统"（歧义时保留原词）
+resolve_aliases_in_text("我的工资单和公积金怎么查")     # → "我的薪资明细和住房公积金怎么查"
+alias_manager.get_candidates("系统")                  # → ["内部系统", "考勤系统"]
+```
 
 **组件温度约定**：
 

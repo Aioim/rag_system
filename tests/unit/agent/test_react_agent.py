@@ -1,7 +1,9 @@
 """ReActAgent 核心循环单元测试"""
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from agent.tools import SearchTool, WebSearchTool, ToolResult
+
+import pytest
+
+from agent.tools import SearchTool, ToolResult, WebSearchTool
 
 
 def _make_search_tool(chunks_per_call: list[list] | None = None):
@@ -206,6 +208,6 @@ class TestReActAgentStream:
         async for e in agent.run_stream("hello", "default"):
             events.append(e)
 
-        react_end = [e for e in events if e.event == "react_end"][0]
+        react_end = next(e for e in events if e.event == "react_end")
         assert react_end.data["total_iterations"] == 1
         assert "total_elapsed_ms" in react_end.data

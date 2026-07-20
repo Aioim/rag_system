@@ -53,7 +53,7 @@ class DistillationConfig(BaseModel):
 class FinetuneConfig(BaseModel):
     """微调总配置"""
 
-    output_dir: Path = Field(default=Path("models/finetuned"), description="LoRA 适配器输出目录")
+    output_dir: Path = Field(default=Path("local_models/finetuned"), description="LoRA 适配器输出目录")
     device: Literal["auto", "cuda", "cpu"] = "auto"
     data_dir: Path = Field(default=Path("data/finetune"), description="训练数据默认目录")
     training: TrainingConfig = Field(default_factory=TrainingConfig)
@@ -77,7 +77,7 @@ class FinetuneConfig(BaseModel):
         """从 config.settings YAML 加载配置，不存在则使用默认值。
 
         通过 config.settings.get() 逐项读取，
-        将 defaults.yaml 中 finetune: 段映射为 Pydantic 对象。
+        将 {env}.yaml 中 finetune: 段映射为 Pydantic 对象。
         """
         try:
             from config import settings
@@ -99,7 +99,7 @@ class FinetuneConfig(BaseModel):
         distill_raw = finetune_cfg.get("distillation", {})
 
         return cls(
-            output_dir=Path(finetune_cfg.get("output_dir", "models/finetuned")),
+            output_dir=Path(finetune_cfg.get("output_dir", "local_models/finetuned")),
             device=finetune_cfg.get("device", "auto"),
             data_dir=Path(finetune_cfg.get("data_dir", "data/finetune")),
             training=TrainingConfig(**training_raw) if training_raw else TrainingConfig(),

@@ -1,8 +1,11 @@
 """Tool 定义单元测试：ToolResult / SearchTool / WebSearchTool"""
-import pytest
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock
 
-from agent.tools import ToolResult, SearchTool, WebSearchTool
+import pytest
+
+from agent.tools import SearchTool, ToolResult, WebSearchTool
 
 
 class TestToolResult:
@@ -84,8 +87,9 @@ class TestWebSearchTool:
         assert result.content == ""
 
 
-def _make_ctx(reranked, retrieval_eval):
+def _make_ctx(reranked: list[Chunk], retrieval_eval: RetrievalEval) -> PipelineContext:
     """Helper：构造含指定 reranked 和 eval 值的 PipelineContext"""
+    from models.chunk import Chunk
     from models.context import PipelineContext
     ctx = PipelineContext(query="test", collection="default")
     ctx.reranked = reranked

@@ -38,13 +38,12 @@ class EmbedderStage:
         total_batches = 0
         t0 = time.perf_counter()
 
-        loop = asyncio.get_running_loop()
         for i in range(0, len(pending), batch_size):
             batch = pending[i: i + batch_size]
             texts = [c.text for c in batch]
-            # 将同步 encode 提交到线程池避免阻塞 asyncio 事件循环
-            embeddings = await loop.run_in_executor(
-                None, self.embedding_model.encode, texts
+            # 将同步 encode 通过 to_thread 避免阻塞 asyncio 事件循环
+            embeddings = await asyncio.to_thread(
+                self.embedding_model.encode, texts
             )
             for c, emb in zip(batch, embeddings, strict=True):
                 c.embedding = emb.tolist()

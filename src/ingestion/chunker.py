@@ -106,7 +106,7 @@ class HierarchicalChunker(_BaseSplitter):
         if not text.strip():
             return []
 
-        sections = re.split(r"(?=^#{1,3}\s?)", text, flags=re.MULTILINE)
+        sections = re.split(r"(?=^#{1,3}\s)", text, flags=re.MULTILINE)
 
         heading_stack: list[str] = []
         text_segments = []
@@ -342,9 +342,8 @@ class ChunkerStage:
             return ctx
 
         # split 为 CPU 密集操作（semantic 策略含 embedding encode），
-        # 放入线程池执行避免阻塞事件循环
-        loop = asyncio.get_running_loop()
-        chunks = await loop.run_in_executor(None, splitter.split, raw_text)
+        # 通过 to_thread 避免阻塞事件循环
+        chunks = await asyncio.to_thread(splitter.split, raw_text)
 
         for c in chunks:
             c.doc_id = ctx.document.doc_id

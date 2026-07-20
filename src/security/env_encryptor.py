@@ -19,7 +19,6 @@ import os
 import sys
 from pathlib import Path
 
-from .secrets_manager import SecretsManager
 from .secrets_manager import secrets as _global_secrets
 from .secure_env_loader import SecureEnvLoader
 

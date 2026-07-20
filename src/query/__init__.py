@@ -1,4 +1,4 @@
-"""查询理解层 — 意图分类 / 清晰度判断 / 上下文融合 / 查询改写"""
+"""查询理解层 — 意图分类 / 清晰度判断 / 上下文融合 / 查询改写 / 别名映射"""
 import threading
 from typing import TYPE_CHECKING
 

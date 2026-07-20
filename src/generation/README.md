@@ -86,7 +86,7 @@ ctx.reranked
 
 ## 配置
 
-生成模块的配置位于 `config/defaults.yaml` 的 `generation:` 节，通过 `settings.generation` 访问（参见 `src/config/settings.py` 的 `GenerationConfig`）：
+生成模块的配置位于 `config/{env}.yaml` 的 `generation:` 节，通过 `settings.generation` 访问（参见 `src/config/settings.py` 的 `GenerationConfig`）：
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|

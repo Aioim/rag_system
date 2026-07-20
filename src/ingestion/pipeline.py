@@ -73,11 +73,10 @@ class IngestionPipeline:
                     time.perf_counter() - t0
                 ) * 1000
 
-        # 3. 写入索引（线程池执行，避免 FAISS I/O 阻塞事件循环）
+        # 3. 写入索引（to_thread 避免 FAISS I/O 阻塞事件循环）
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None, self.index_writer.write, ctx.chunks, collection
+            await asyncio.to_thread(
+                self.index_writer.write, ctx.chunks, collection
             )
         except Exception as e:
             ctx.errors.append(

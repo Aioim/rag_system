@@ -1,4 +1,3 @@
-from config.aliases import alias_manager, resolve_alias, resolve_aliases_in_text
 from config.path import PROJECT_ROOT
 from config.settings import (
     AliasConfig,
@@ -52,8 +51,5 @@ __all__ = [
     "SessionConfig",
     "WebSearchConfig",
     "YamlLoader",
-    "alias_manager",
-    "resolve_alias",
-    "resolve_aliases_in_text",
     "settings",
 ]

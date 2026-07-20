@@ -89,8 +89,8 @@ class HfStrategy:
                     )
                     time.sleep(wait)
                 else:
-                    # 清理不完整下载
-                    if local_dir.is_dir() and not _has_weights(local_dir):
+                    # 清理不完整下载（递归检查，权重可能在子目录）
+                    if local_dir.is_dir() and not _has_weights(local_dir, recursive=True):
                         shutil.rmtree(local_dir, ignore_errors=True)
                     raise RuntimeError(
                         f"模型下载失败（已重试 {self._max_retries} 次）: {model_id}"
@@ -108,10 +108,10 @@ class MsStrategy:
         try:
             from modelscope import snapshot_download as _ms_sd
             self._snapshot_download = _ms_sd
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError(
                 "modelscope 未安装。请运行: pip install modelscope"
-            )
+            ) from e
 
     def download(self, model_id: str, force: bool,
                  cache_dir: Path, **kwargs) -> Path:
@@ -143,8 +143,8 @@ class MsStrategy:
                 else:
                     shutil.copy2(str(f), str(dst))
 
-        # 验证权重文件
-        if not _has_weights(target_dir):
+        # 验证权重文件（递归检查，ModelScope 可能嵌套存放）
+        if not _has_weights(target_dir, recursive=True):
             logger.warning(
                 "未找到模型权重文件（.safetensors / .bin / .onnx 等），"
                 "模型可能不完整"
@@ -182,14 +182,19 @@ class AutoStrategy:
 # 内部工具
 # ============================================================================
 
-def _has_weights(local_dir: Path) -> bool:
-    """检查目录是否包含模型权重文件（递归扫描所有子目录）"""
+def _has_weights(local_dir: Path, *, recursive: bool = False) -> bool:
+    """检查目录是否包含模型权重文件。
+
+    Args:
+        local_dir: 待检查目录
+        recursive: False — 仅检查直接子文件（list_downloaded 的 _scan 用此区分
+                   命名空间目录与模型目录）；True — 递归扫描任意深度
+                   （is_downloaded / 下载完整性验证等场景）
+    """
     if not local_dir.is_dir():
         return False
-    for f in local_dir.rglob("*"):
-        if f.is_file() and f.suffix in _WEIGHT_EXTS:
-            return True
-    return False
+    iterator = local_dir.rglob("*") if recursive else local_dir.glob("*")
+    return any(f.is_file() and f.suffix in _WEIGHT_EXTS for f in iterator)
 
 
 # ============================================================================
@@ -218,11 +223,22 @@ class ModelDownloader:
         )
         if source == "huggingface":
             return hf
-        ms = MsStrategy()
+
+        # 延迟构造 MsStrategy — 避免 auto 模式在 modelscope 未安装时崩溃
+        ms: MsStrategy | None = None
+        try:
+            ms = MsStrategy()
+        except RuntimeError:
+            if source == "modelscope":
+                raise  # 明确指定 modelscope 但未安装 → 直接报错
+
         if source == "modelscope":
-            return ms
+            return ms  # type: ignore[return-value]  # try 块成功时 ms 非 None
         if source == "auto":
-            return AutoStrategy(ms, hf)
+            if ms is not None:
+                return AutoStrategy(ms, hf)
+            logger.info("modelscope 未安装，auto 模式仅使用 HuggingFace")
+            return hf
         raise ValueError(
             f"不支持的 download_source: {source!r}，"
             f"可选: huggingface | modelscope | auto"
@@ -247,9 +263,9 @@ class ModelDownloader:
         return self._strategy.download(model_id, force, self._cache_dir)
 
     def is_downloaded(self, model_id: str) -> bool:
-        """检查模型是否已下载（目录存在且包含模型权重文件）"""
+        """检查模型是否已下载（目录存在且在任意深度包含模型权重文件）"""
         model_id = _validate_model_id(model_id)
-        return _has_weights(self._cache_dir / model_id)
+        return _has_weights(self._cache_dir / model_id, recursive=True)
 
     def list_downloaded(self) -> dict[str, Path]:
         """列出所有已下载模型（只返回含权重文件的完整模型）"""
@@ -286,6 +302,5 @@ class ModelDownloader:
 # ============================================================================
 
 if __name__ == "__main__":
-    import sys
     from model import models
     models.download_all()

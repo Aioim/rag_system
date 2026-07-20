@@ -17,7 +17,6 @@ from pathlib import Path
 from cryptography.fernet import InvalidToken
 
 from logger import logger, security_logger
-from security.secrets_manager import SecretsManager
 from security.secrets_manager import secrets as _global_secrets
 
 

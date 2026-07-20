@@ -61,7 +61,7 @@ class MaskingEngine:
         result = text
         for category in MaskingEngine._PATTERNS.values():
             for pattern, repl in category:
-                result, n = pattern.subn(repl, result)
+                result, _ = pattern.subn(repl, result)
         return result
 
     @staticmethod
@@ -89,7 +89,7 @@ class MaskingEngine:
         result = text
         for category in MaskingEngine._PATTERNS.values():
             for pattern, repl in category:
-                result, n = pattern.subn(repl, result)
+                result, _ = pattern.subn(repl, result)
         return result
 
 def mask_sensitive_data(message):

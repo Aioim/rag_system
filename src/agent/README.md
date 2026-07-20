@@ -65,7 +65,7 @@ print(ctx.metadata["react_traces"])
 ## 配置
 
 ```yaml
-# config/defaults.yaml
+# config/{env}.yaml
 agent:
   max_iterations: 5
   search_top_k: 3

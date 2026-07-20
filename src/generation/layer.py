@@ -6,7 +6,6 @@
 3. SUFFICIENT → 完整流程：组装 → 路由 → 生成 → 核查 → 引用
 """
 import time
-from typing import Any
 
 from config import settings
 from generation.citation_builder import CitationBuilder
@@ -16,13 +15,13 @@ from generation.prompt_assembler import PromptAssembler
 from logger import logger
 from models.context import PipelineContext
 from models.enums import FallbackLevel, RetrievalEval
+from models.llm import LLMProtocol
 
 
 class GenerationLayer:
     """构造时注入 LLM；组件在 __init__ 中创建（无外部依赖即可创建者）"""
 
-    def __init__(self, llm: Any):
-        # TODO: 替换 Any 为 LLMProtocol，统一 llm 参数类型
+    def __init__(self, llm: LLMProtocol):
         self._llm = llm
         self.assembler = PromptAssembler()
         self.router = LLMRouter()

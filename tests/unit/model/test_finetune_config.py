@@ -65,9 +65,9 @@ class TestFinetuneConfig:
         assert cfg.distillation.alpha == 0.5
 
     def test_resolve_output_dir_relative(self):
-        cfg = FinetuneConfig(output_dir=Path("models/finetuned"))
+        cfg = FinetuneConfig(output_dir=Path("local_models/finetuned"))
         resolved = cfg.resolve_output_dir(Path("/project"))
-        assert resolved == Path("/project/models/finetuned")
+        assert resolved == Path("/project/local_models/finetuned")
 
     def test_resolve_output_dir_absolute(self):
         cfg = FinetuneConfig(output_dir=Path("/absolute/path"))

@@ -32,27 +32,22 @@ class YamlLoader:
     def load_environment(self, env: str = "dev") -> dict[str, Any]:
         """
         加载指定环境的 YAML 配置。
-        合并策略：defaults.yaml → {env}.yaml（后者覆盖前者）
+        直接读取 {env}.yaml，不再合并 defaults.yaml。
+        若 {env}.yaml 不存在则返回空字典（依赖 Pydantic 模型默认值）。
         """
+        env_file = f"{env}.yaml"
+
         # 检查缓存
         if env in self._cache:
             cached_config, mtime_dict = self._cache[env]
             if self._is_cache_valid(mtime_dict):
                 return deepcopy(cached_config)  # 深拷贝防止外部修改缓存
 
-        # 加载 defaults.yaml 和 {env}.yaml
-        base_config, base_mtime = self._load_yaml_with_mtime("defaults.yaml")
-        env_file = f"{env}.yaml"
-        env_config, env_mtime = (
-            self._load_yaml_with_mtime(env_file)
-            if (self.config_dir / env_file).exists()
-            else ({}, 0)
-        )
-
-        merged = deep_merge(base_config, env_config)
-        mtime_dict = {"defaults.yaml": base_mtime, f"{env}.yaml": env_mtime}
-        self._cache[env] = (merged, mtime_dict)
-        return deepcopy(merged)  # 深拷贝防止外部修改缓存
+        # 直接加载 {env}.yaml
+        env_config, env_mtime = self._load_yaml_with_mtime(env_file)
+        mtime_dict = {env_file: env_mtime}
+        self._cache[env] = (env_config, mtime_dict)
+        return deepcopy(env_config)  # 深拷贝防止外部修改缓存
 
     def _is_cache_valid(self, mtime_dict: dict[str, float]) -> bool:
         for filename, cached_mtime in mtime_dict.items():
@@ -68,9 +63,6 @@ class YamlLoader:
     def _load_yaml_with_mtime(self, filename: str) -> tuple[dict[str, Any], float]:
         file_path = self.config_dir / filename
         if not file_path.exists():
-            if filename == "defaults.yaml":
-                # 默认配置文件不存在时返回空配置（不抛异常，依赖代码默认值）
-                return {}, 0.0
             return {}, 0.0
 
         mtime = file_path.stat().st_mtime

@@ -16,7 +16,7 @@ class PyMuPDF4LLMParser(BaseParser):
 
     def parse(self, source_path: Path, output_dir: Path | None = None) -> str:
         try:
-            import pymupdf4llm  # noqa: F401
+            import pymupdf4llm  # 副作用：检查 pymupdf4llm 是否可导入
         except ImportError:
             raise ImportError(
                 "PyMuPDF4LLM 未安装。请运行: pip install rag-service[ingestion]"

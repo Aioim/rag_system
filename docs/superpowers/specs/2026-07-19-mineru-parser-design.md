@@ -74,7 +74,7 @@ parse(source_path: Path, output_dir: Path) → str
 ingestion:
   mineru:
     device: cpu                  # cpu | cuda | mps
-    models_dir: models/mineru    # MinerU 模型权重目录
+    models_dir: local_models/mineru    # MinerU 模型权重目录
 ```
 
 ### 切换方式
@@ -94,7 +94,7 @@ ingestion:
 ```python
 class MinerUConfig(BaseModel):
     device: Literal["cpu", "cuda", "mps"] = "cpu"
-    models_dir: str = "models/mineru"
+    models_dir: str = "local_models/mineru"
 
 class IngestionConfig(BaseModel):
     # ... 现有字段

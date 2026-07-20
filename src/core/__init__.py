@@ -1,10 +1,10 @@
 """RAG 核心 Pipeline — 查询理解 → 检索 → 兜底 → 生成 → 会话记录"""
 import threading
-from typing import Any
 
 from core.fallback import FallbackHandler
 from core.pipeline import RAGPipeline
 from logger import logger
+from models.llm import LLMProtocol
 from session.manager import SessionManager
 
 # 全局单例
@@ -14,7 +14,7 @@ _init_llm_id: int | None = None
 _init_sm_id: int | None = None
 
 
-def get_rag_pipeline(llm: Any, session_manager: SessionManager) -> RAGPipeline:
+def get_rag_pipeline(llm: LLMProtocol, session_manager: SessionManager) -> RAGPipeline:
     """获取 RAG Pipeline 全局单例
 
     首次调用时用传入的 llm/session_manager 初始化单例。

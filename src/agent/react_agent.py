@@ -1,4 +1,6 @@
 """ReActAgent — 思考→行动→观察 循环"""
+from __future__ import annotations
+
 import logging
 import re
 import time
@@ -6,9 +8,13 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from models.react_trace import ReActTrace
+
 if TYPE_CHECKING:
+    from agent.tools import SearchTool, WebSearchTool
     from config.settings import AgentConfig
-    from agent.tools import SearchTool, WebSearchTool, ToolResult
+    from models.chunk import Chunk
+    from models.llm import LLMProtocol
 
 _logger = logging.getLogger(__name__)
 
@@ -22,41 +28,55 @@ _RE_ACTION = re.compile(r"ACTION:\s*(\w+)", re.IGNORECASE)
 _RE_QUERY = re.compile(r"QUERY:\s*(.+)", re.IGNORECASE)
 
 
-def parse_react_output(text: str) -> dict[str, Any]:
+@dataclass
+class ParseResult:
+    """parse_react_output 解析成功"""
+    thought: str
+    action: str
+    query: str | None
+
+
+@dataclass
+class ParseError:
+    """parse_react_output 解析失败"""
+    error: str
+
+
+def parse_react_output(text: str) -> ParseResult | ParseError:
     """从 LLM 响应中提取 THOUGHT / ACTION / QUERY 三元组。
 
     Returns:
-        成功: {"thought": str, "action": str, "query": str | None}
-        失败: {"parse_error": str}
+        ParseResult(thought, action, query) — 解析成功
+        ParseError(error) — 解析失败
     """
     if not text or not text.strip():
-        return {"parse_error": "empty input"}
+        return ParseError("empty input")
 
     # 提取 THOUGHT
     m_thought = _RE_THOUGHT.search(text)
     if not m_thought:
-        return {"parse_error": "missing THOUGHT field"}
+        return ParseError("missing THOUGHT field")
     thought = " ".join(m_thought.group(1).strip().split())
 
     # 提取 ACTION
     m_action = _RE_ACTION.search(text)
     if not m_action:
-        return {"parse_error": "missing ACTION field"}
+        return ParseError("missing ACTION field")
     action = m_action.group(1).strip().lower()
     if action not in _VALID_ACTIONS:
-        return {"parse_error": f"unknown action: {action!r}"}
+        return ParseError(f"unknown action: {action!r}")
 
     # FINISH 不需要 QUERY
     if action == "finish":
-        return {"thought": thought, "action": "finish", "query": None}
+        return ParseResult(thought=thought, action="finish", query=None)
 
     # search / web_search 必须有 QUERY
     m_query = _RE_QUERY.search(text)
     if not m_query:
-        return {"parse_error": f"missing QUERY field for action={action!r}"}
+        return ParseError(f"missing QUERY field for action={action!r}")
     query = " ".join(m_query.group(1).strip().split())
 
-    return {"thought": thought, "action": action, "query": query}
+    return ParseResult(thought=thought, action=action, query=query)
 
 
 # ---- 数据模型 ---------------------------------------------------------------
@@ -64,8 +84,8 @@ def parse_react_output(text: str) -> dict[str, Any]:
 @dataclass
 class AgentResult:
     """ReAct Agent 执行结果"""
-    reranked: list = field(default_factory=list)     # list[Chunk]
-    react_traces: list = field(default_factory=list)  # list[ReActTrace]
+    reranked: list[Chunk] = field(default_factory=list)  # 实际由 RAGPipeline 填充 Chunk 列表
+    react_traces: list[ReActTrace] = field(default_factory=list)
     total_iterations: int = 0
     total_elapsed_ms: float = 0.0
 
@@ -75,6 +95,20 @@ class SSEEvent:
     """SSE 流式事件"""
     event: str   # "react_start" | "thought" | "action" | "observation" | "react_end"
     data: dict[str, Any]
+
+
+@dataclass
+class _LoopStep:
+    """内部：ReAct 循环单步执行结果，run() 和 run_stream() 共享。
+
+    除 trace 和 should_break 外，其余字段为循环状态传递（非 trace 已有字段）。
+    thought/action/query/observation 通过 step.trace.* 访问，不在此重复存储。
+    """
+    trace: ReActTrace
+    should_break: bool
+    tool_result: Any = None                     # ToolResult（仅 tool_executed 时有值）
+    next_pair_key: tuple[str, str] | None = None
+    next_consecutive_count: int = 0
 
 
 # ---- System Prompt ----------------------------------------------------------
@@ -111,112 +145,47 @@ class ReActAgent:
 
     def __init__(
         self,
-        llm: Any,
-        search_tool: Any,
-        web_search_tool: Any,
-        config: Any = None,
+        llm: LLMProtocol,
+        search_tool: SearchTool,
+        web_search_tool: WebSearchTool,
+        config: AgentConfig | None = None,
     ) -> None:
         from config import settings
 
         self._llm = llm
         self._search = search_tool
         self._web = web_search_tool
-        self._config = config or settings.agent
+        self._config: AgentConfig = config or settings.agent
 
     # ---- 主入口 ------------------------------------------------------------
 
     async def run(self, query: str, collection: str) -> AgentResult:
         """执行 ReAct 循环，返回 AgentResult"""
-        from models.react_trace import ReActTrace
-
         t0 = time.perf_counter()
         traces: list[ReActTrace] = []
         observation: str | None = None
-        last_pair_key: tuple[str, str] | None = None
+        pair_key: tuple[str, str] | None = None
         consecutive_count = 0
 
         for iteration in range(1, self._config.max_iterations + 1):
-            t_iter = time.perf_counter()
-
-            # 1. 调用 LLM 获取决策
-            prompt = self._build_prompt(query, traces, observation)
-            raw = await self._call_llm(prompt)
-
-            # 2. 解析输出
-            parsed = parse_react_output(raw)
-            if "parse_error" in parsed:
-                # 格式错误：记录 trace 并退化为 FINISH
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=f"LLM 输出格式异常: {parsed['parse_error']}，强制结束",
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
-                break
-
-            action = parsed["action"]
-            search_query = parsed.get("query")
-
-            # 3. 连续重复检测（仅跟踪连续相同的 ACTION+QUERY）
-            pair_key = (action, search_query or "")
-            if pair_key == last_pair_key:
-                consecutive_count += 1
-            else:
-                consecutive_count = 1
-                last_pair_key = pair_key
-
-            if consecutive_count > 1 and consecutive_count >= self._config.max_consecutive_duplicates:
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=f"连续 {consecutive_count} 轮重复 {action}:{search_query}，终止循环",
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
-                break
-
-            # 4. FINISH → 退出
-            if action == "finish":
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=parsed["thought"],
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
-                break
-
-            # 5. 最后一轮强制结束（不再执行工具）
-            if iteration == self._config.max_iterations:
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=f"已达到最大迭代次数 ({self._config.max_iterations})，强制结束",
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
-                break
-
-            # 6. 执行工具 + 构建 Observation
-            tool_result = await self._execute_tool(action, search_query or "", collection)
-            observation = self._format_observation(tool_result)
-
-            trace = ReActTrace(
-                iteration=iteration,
-                thought=parsed["thought"],
-                action=action,
-                query=search_query,
+            step = await self._execute_step(
+                query=query,
+                collection=collection,
+                traces=traces,
                 observation=observation,
-                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+                iteration=iteration,
+                last_pair_key=pair_key,
+                consecutive_count=consecutive_count,
             )
-            traces.append(trace)
-
-        # 循环结束，合并去重所有检索结果
-        reranked = await self._collect_reranked(traces)
+            traces.append(step.trace)
+            if step.should_break:
+                break
+            observation = step.trace.observation
+            pair_key = step.next_pair_key
+            consecutive_count = step.next_consecutive_count
 
         return AgentResult(
-            reranked=reranked,
+            reranked=[],  # 由 RAGPipeline._run_react 通过 search_queries 重新检索填充
             react_traces=traces,
             total_iterations=len(traces),
             total_elapsed_ms=(time.perf_counter() - t0) * 1000,
@@ -226,113 +195,54 @@ class ReActAgent:
         self, query: str, collection: str
     ) -> AsyncGenerator[SSEEvent, None]:
         """流式执行 ReAct 循环，逐事件推送"""
-        from models.react_trace import ReActTrace
-
         t0 = time.perf_counter()
         traces: list[ReActTrace] = []
         observation: str | None = None
-        last_pair_key: tuple[str, str] | None = None
+        pair_key: tuple[str, str] | None = None
         consecutive_count = 0
 
         yield SSEEvent("react_start", {"mode": "react", "query": query})
 
         for iteration in range(1, self._config.max_iterations + 1):
-            t_iter = time.perf_counter()
+            step = await self._execute_step(
+                query=query,
+                collection=collection,
+                traces=traces,
+                observation=observation,
+                iteration=iteration,
+                last_pair_key=pair_key,
+                consecutive_count=consecutive_count,
+            )
+            traces.append(step.trace)
 
-            # LLM 决策
-            prompt = self._build_prompt(query, traces, observation)
-            raw = await self._call_llm(prompt)
-            parsed = parse_react_output(raw)
-
-            if "parse_error" in parsed:
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=f"LLM 输出格式异常: {parsed['parse_error']}，强制结束",
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
-                yield SSEEvent("thought", {
-                    "iteration": iteration,
-                    "thought": trace.thought,
-                    "action": "finish",
-                })
-                break
-
-            action = parsed["action"]
-            search_query = parsed.get("query")
-
-            # 连续重复检测（仅跟踪连续相同的 ACTION+QUERY，与 run() 一致）
-            pair_key = (action, search_query or "")
-            if pair_key == last_pair_key:
-                consecutive_count += 1
-            else:
-                consecutive_count = 1
-                last_pair_key = pair_key
-
-            if consecutive_count > 1 and consecutive_count >= self._config.max_consecutive_duplicates:
-                yield SSEEvent("thought", {
-                    "iteration": iteration,
-                    "thought": f"连续 {consecutive_count} 轮重复 {action}:{search_query}，终止循环",
-                    "action": "finish",
-                })
-                break
-
-            # 推送 thought 事件
+            # 推送 thought 事件（所有分支都推送，包括 parse_error/duplicate/max_iterations/finish）
             yield SSEEvent("thought", {
                 "iteration": iteration,
-                "thought": parsed["thought"],
-                "action": action,
+                "thought": step.trace.thought,
+                "action": step.trace.action,
             })
 
-            if action == "finish":
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=parsed["thought"],
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
+            if step.should_break:
                 break
 
-            # 最后一轮强制结束
-            if iteration == self._config.max_iterations:
-                trace = ReActTrace(
-                    iteration=iteration,
-                    thought=f"已达到最大迭代次数 ({self._config.max_iterations})，强制结束",
-                    action="finish",
-                    elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-                )
-                traces.append(trace)
-                break
-
-            # 推送 action 事件
+            # 推送 action + observation 事件（仅非终止步骤）
             yield SSEEvent("action", {
                 "iteration": iteration,
-                "action": action,
-                "query": search_query,
+                "action": step.trace.action,
+                "query": step.trace.query,
             })
 
-            # 执行工具
-            tool_result = await self._execute_tool(action, search_query or "", collection)
-            observation = self._format_observation(tool_result)
+            tr = step.tool_result
+            if tr is not None:
+                yield SSEEvent("observation", {
+                    "iteration": iteration,
+                    "chunk_count": tr.chunk_count,
+                    "elapsed_ms": round(tr.elapsed_ms, 2),
+                })
 
-            # 推送 observation 事件
-            yield SSEEvent("observation", {
-                "iteration": iteration,
-                "chunk_count": tool_result.chunk_count,
-                "elapsed_ms": round(tool_result.elapsed_ms, 2),
-            })
-
-            trace = ReActTrace(
-                iteration=iteration,
-                thought=parsed["thought"],
-                action=action,
-                query=search_query,
-                observation=observation,
-                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
-            )
-            traces.append(trace)
+            observation = step.trace.observation
+            pair_key = step.next_pair_key
+            consecutive_count = step.next_consecutive_count
 
         total_elapsed = (time.perf_counter() - t0) * 1000
         yield SSEEvent("react_end", {
@@ -340,10 +250,151 @@ class ReActAgent:
             "total_elapsed_ms": round(total_elapsed, 2),
         })
 
+    # ---- 核心步骤 ----------------------------------------------------------
+
+    async def _execute_step(
+        self,
+        query: str,
+        collection: str,
+        traces: list[ReActTrace],
+        observation: str | None,
+        iteration: int,
+        last_pair_key: tuple[str, str] | None,
+        consecutive_count: int,
+    ) -> _LoopStep:
+        """执行 ReAct 循环的单个步骤：LLM 决策 → 解析 → 验证 → 工具执行。
+
+        run() 和 run_stream() 共享此方法，确保核心逻辑一致。
+        """
+        t_iter = time.perf_counter()
+
+        # 1. LLM 决策 + 解析
+        prompt = self._build_prompt(query, traces, observation)
+        raw = await self._call_llm(prompt)
+        parsed = parse_react_output(raw)
+
+        # 2. 计算重复检测 key
+        if isinstance(parsed, ParseResult):
+            pair_key = (parsed.action, parsed.query or "")
+        else:
+            pair_key = ("__error__", parsed.error)
+        if pair_key == last_pair_key:
+            consecutive_count += 1
+        else:
+            consecutive_count = 1
+
+        # 3. 终止条件检查
+        early = self._check_step_termination(parsed, iteration, t_iter, pair_key, consecutive_count)
+        if early is not None:
+            return early
+
+        # 4. 工具执行（parsed 已确认为 ParseResult）
+        return await self._build_tool_step(parsed, collection, iteration, t_iter, pair_key, consecutive_count)
+
+    def _check_step_termination(
+        self,
+        parsed: ParseResult | ParseError,
+        iteration: int,
+        t_iter: float,
+        pair_key: tuple[str, str],
+        consecutive_count: int,
+    ) -> _LoopStep | None:
+        """检查是否需要提前终止循环（解析失败/重复/FINISH/达到最大轮数）。
+
+        Returns:
+            _LoopStep 如果需要终止，None 表示继续执行工具。
+        """
+        # 解析失败 → 强制 FINISH
+        if isinstance(parsed, ParseError):
+            trace = ReActTrace(
+                iteration=iteration,
+                thought=f"LLM 输出格式异常: {parsed.error}，强制结束",
+                action="finish",
+                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+            )
+            return _LoopStep(
+                trace=trace, should_break=True,
+                next_pair_key=pair_key,
+                next_consecutive_count=consecutive_count,
+            )
+
+        # 连续重复检测
+        if consecutive_count > 1 and consecutive_count >= self._config.max_consecutive_duplicates:
+            trace = ReActTrace(
+                iteration=iteration,
+                thought=f"连续 {consecutive_count} 轮重复 {parsed.action}:{parsed.query}，终止循环",
+                action="finish",
+                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+            )
+            return _LoopStep(
+                trace=trace, should_break=True,
+                next_pair_key=pair_key,
+                next_consecutive_count=consecutive_count,
+            )
+
+        # FINISH → 退出
+        if parsed.action == "finish":
+            trace = ReActTrace(
+                iteration=iteration,
+                thought=parsed.thought,
+                action="finish",
+                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+            )
+            return _LoopStep(
+                trace=trace, should_break=True,
+                next_pair_key=pair_key,
+                next_consecutive_count=consecutive_count,
+            )
+
+        # 最后一轮强制结束
+        if iteration == self._config.max_iterations:
+            trace = ReActTrace(
+                iteration=iteration,
+                thought=f"已达到最大迭代次数 ({self._config.max_iterations})，强制结束",
+                action="finish",
+                elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+            )
+            return _LoopStep(
+                trace=trace, should_break=True,
+                next_pair_key=pair_key,
+                next_consecutive_count=consecutive_count,
+            )
+
+        return None
+
+    async def _build_tool_step(
+        self,
+        parsed: ParseResult,
+        collection: str,
+        iteration: int,
+        t_iter: float,
+        pair_key: tuple[str, str],
+        consecutive_count: int,
+    ) -> _LoopStep:
+        """执行工具并构建 Observation 步骤"""
+        tool_result = await self._execute_tool(parsed.action, parsed.query or "", collection)
+        observation_str = self._format_observation(tool_result)
+
+        trace = ReActTrace(
+            iteration=iteration,
+            thought=parsed.thought,
+            action=parsed.action,
+            query=parsed.query,
+            observation=observation_str,
+            elapsed_ms=(time.perf_counter() - t_iter) * 1000,
+        )
+
+        return _LoopStep(
+            trace=trace, should_break=False,
+            tool_result=tool_result,
+            next_pair_key=pair_key,
+            next_consecutive_count=consecutive_count,
+        )
+
     # ---- 内部方法 ----------------------------------------------------------
 
     def _build_prompt(
-        self, query: str, traces: list, observation: str | None
+        self, query: str, traces: list[ReActTrace], observation: str | None
     ) -> str:
         """构建本轮 LLM 调用的完整 prompt"""
         parts = [_SYSTEM_PROMPT, "", f"用户问题: {query}"]
@@ -367,8 +418,8 @@ class ReActAgent:
                 prompt, temperature=self._config.llm_temperature
             )
             return result.content
-        except Exception as e:
-            _logger.error("ReActAgent LLM 调用失败: %s", e)
+        except Exception:
+            _logger.exception("ReActAgent LLM 调用失败")
             return ""
 
     async def _execute_tool(
@@ -389,7 +440,6 @@ class ReActAgent:
                 )
         except Exception as e:
             _logger.warning("工具执行失败 %s: %s", action, e)
-            from agent.tools import ToolResult
             return ToolResult(
                 tool=action, query=query, content=f"工具执行错误: {e}",
                 chunk_count=0, elapsed_ms=0,
@@ -403,12 +453,3 @@ class ReActAgent:
             f"{result.elapsed_ms:.0f}ms):\n{result.content}"
         )
 
-    @staticmethod
-    async def _collect_reranked(traces: list) -> list:
-        """从 traces 中收集检索结果，由 RAGPipeline 统一处理。
-
-        注意：实际 reranked chunks 由上层 RAGPipeline 通过
-        search traces 的 query 重新检索获得（支持去重）。
-        此处返回空列表，由 RAGPipeline 统一处理。
-        """
-        return []  # 由 RAGPipeline 的 _merge_react_results 统一处理

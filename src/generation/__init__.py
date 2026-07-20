@@ -1,6 +1,5 @@
 """生成层 — Prompt 组装 / 模型路由 / 生成 / 事实核查 / 引用构建"""
 import threading
-from typing import Any
 
 from generation.citation_builder import CitationBuilder
 from generation.fact_checker import FactChecker
@@ -8,6 +7,7 @@ from generation.layer import GenerationLayer
 from generation.llm_router import LLMRouter
 from generation.prompt_assembler import PromptAssembler
 from logger import logger
+from models.llm import LLMProtocol
 
 # 全局单例
 _generation_layer: GenerationLayer | None = None
@@ -15,8 +15,7 @@ _lock = threading.Lock()
 _init_llm_id: int | None = None
 
 
-def get_generation_layer(llm: Any) -> GenerationLayer:
-    # TODO: 替换 Any 为 LLMProtocol，统一 llm 参数类型
+def get_generation_layer(llm: LLMProtocol) -> GenerationLayer:
     """获取生成层全局单例
 
     首次调用时用传入的 llm 初始化单例。
@@ -26,6 +25,10 @@ def get_generation_layer(llm: Any) -> GenerationLayer:
 
     # 快速路径：已初始化，无锁检查
     if _generation_layer is not None:
+        if id(llm) != _init_llm_id:
+            logger.warning(
+                "get_generation_layer 已初始化，忽略不同的 llm 参数"
+            )
         return _generation_layer
 
     with _lock:

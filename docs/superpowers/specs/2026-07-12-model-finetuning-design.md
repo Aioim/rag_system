@@ -43,7 +43,7 @@ src/model/
 ### 适配器文件组织
 
 ```
-models/finetuned/
+local_models/finetuned/
 ├── my-embedding-v1/              # embedding LoRA 适配器
 │   ├── adapter_config.json
 │   ├── adapter_model.safetensors
@@ -62,7 +62,7 @@ models/finetuned/
 
 ```yaml
 finetune:
-  output_dir: models/finetuned       # LoRA 适配器输出目录（相对 PROJECT_ROOT）
+  output_dir: local_models/finetuned       # LoRA 适配器输出目录（相对 PROJECT_ROOT）
   device: auto                       # auto | cuda | cpu
   data_dir: data/finetune            # 训练数据默认目录
 
@@ -394,7 +394,7 @@ from model.finetune import FinetuneConfig, TrainingConfig
 # --- 基础微调 ---
 result = models.finetune("embedding", data_path="data/finetune/triplets.jsonl")
 # result.metrics      → {"train_loss": 0.12, "eval_loss": 0.15, "epochs": 3}
-# result.adapter_path  → Path("models/finetuned/embedding_20260712_143000")
+# result.adapter_path  → Path("local_models/finetuned/embedding_20260712_143000")
 
 result = models.finetune("reranker", data_path="data/finetune/rerank_data.jsonl",
                          output_name="my-reranker")

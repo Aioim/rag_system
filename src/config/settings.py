@@ -444,7 +444,7 @@ class ConfigManager:
     # 实例属性类型声明（在 __new__ 中初始化，此处为 mypy 类型追踪）
     _config: RAGAppConfig | None = None
     _yaml_loader: Any = None  # YamlLoader，延迟引用避免循环
-    _overrides: dict[str, Any] = {}
+    _overrides: dict[str, Any] | None = None
     _dict_cache: dict[str, Any] | None = None
     _initialized: bool = False
 
@@ -489,9 +489,6 @@ class ConfigManager:
                         self._config.log.initialize()
                         self._config.session.initialize()
                         self._config.faiss.initialize()
-                        # 从配置路径加载别名（若与默认路径不同）
-                        from config.aliases import alias_manager as _am
-                        _am.load(self._config.aliases.file_path)
                         self._initialized = True
                     except Exception as e:
                         raise RuntimeError(f"配置加载失败: {e}") from e
@@ -602,8 +599,9 @@ class ConfigManager:
             self._dict_cache = None
             self._initialized = False
         self.initialize()
-        # 别名文件可能已变更，强制重新加载
-        from config.aliases import alias_manager as _am
+        # 别名文件可能已变更，强制重新加载（确保配置路径被加载后重载）
+        from query.aliases import alias_manager as _am
+        _am.load(self._config.aliases.file_path)
         _am.reload()
 
 
@@ -614,8 +612,8 @@ class ConfigManager:
 settings = ConfigManager()
 
 __all__ = [
-    "AgentConfig",
     "APIConfig",
+    "AgentConfig",
     "AliasConfig",
     "ChunkingConfig",
     "ConfigManager",

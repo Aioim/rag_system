@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 
+from config import settings
 from ingestion.context import PipelineContext
 from ingestion.parsers import get_parser
 from models.enums import DocumentStatus
@@ -21,17 +22,14 @@ class ParserStage:
             raise FileNotFoundError(f"文件不存在: {source_path}")
 
         # 查表获取解析器名称，未配置的格式 fallback 到 docling
-        from config import settings
-
         parser_name = settings.ingestion.parsers.get(
             ctx.document.file_type, "docling"
         )
         parser = get_parser(parser_name)
 
-        # 委托解析（parse() 是同步方法，通过 run_in_executor 异步化）
-        loop = asyncio.get_running_loop()
-        ctx.document.raw_text = await loop.run_in_executor(
-            None, parser.parse, source_path, settings.ingestion.parsed_doc_dir
+        # 委托解析（parse() 是同步方法，通过 to_thread 异步化）
+        ctx.document.raw_text = await asyncio.to_thread(
+            parser.parse, source_path, settings.ingestion.parsed_doc_dir
         )
 
         # 将解析后的 Markdown 写入磁盘
@@ -50,8 +48,6 @@ class ParserStage:
     @staticmethod
     def _write_markdown(ctx: PipelineContext) -> Path:
         """将 raw_text 写入 parsed_doc_dir / {doc_id}.md"""
-        from config import settings
-
         output_dir = settings.ingestion.parsed_doc_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         md_path = output_dir / f"{ctx.document.doc_id}.md"

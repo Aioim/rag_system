@@ -255,15 +255,15 @@ class TestModelDownloader:
         assert dl.is_downloaded("org/model") is True
 
     def test_list_downloaded_scans_recursively(self, tmp_path):
-        """list_downloaded 递归扫描（rglob 检测子目录中的权重文件）"""
+        """list_downloaded 递归扫描命名空间目录，返回完整 model_id"""
         (tmp_path / "org" / "model").mkdir(parents=True)
         (tmp_path / "org" / "model" / "model.safetensors").write_text("w")
 
         dl = ModelDownloader(cache_dir=tmp_path)
         result = dl.list_downloaded()
-        # rglob 使 _has_weights 能检测到 org/model/model.safetensors
-        assert "org" in result
-        assert result["org"] == tmp_path / "org"
+        # _scan 递归进入命名空间目录，返回完整 "org/model" 而非 "org"
+        assert "org/model" in result
+        assert result["org/model"] == tmp_path / "org" / "model"
 
     def test_remove_deletes_directory(self, tmp_path):
         """remove 删除模型目录"""

@@ -1,6 +1,7 @@
 """ReAct Agent 共享测试 fixtures"""
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
 
 
 class ProgrammableLLM:
@@ -22,14 +23,9 @@ class ProgrammableLLM:
 
 @pytest.fixture
 def agent_config():
+    """使用 AgentConfig 默认值；测试可按需覆盖特定字段"""
     from config.settings import AgentConfig
-    return AgentConfig(
-        max_iterations=5,
-        search_top_k=3,
-        max_observation_chars=3000,
-        llm_temperature=0.0,
-        max_consecutive_duplicates=2,
-    )
+    return AgentConfig()
 
 
 @pytest.fixture

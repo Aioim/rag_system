@@ -1,10 +1,10 @@
 """查询理解层主编排器 — Pipeline 链式编排"""
 import asyncio
 
-from config.aliases import resolve_aliases_in_text
 from logger import logger
 from models.context import PipelineContext
 from models.llm import LLMProtocol
+from query.aliases import resolve_aliases_in_text
 from query.context_fuser import ContextFuser
 from query.intent_classifier import IntentClassifier
 from query.rewriters import QueryRewriter
@@ -58,8 +58,9 @@ class QueryUnderstandingLayer:
             )
             ctx.session = session
             if session is not None:
-                query = await self.context_fuser.fuse(query, session)
-                ctx.query = query
+                fused_query = await self.context_fuser.fuse(query, session)
+                ctx.query = fused_query
+                query = fused_query
 
         # 4. 查询改写（并行）
         ctx.rewritten_queries = await self.rewriter.rewrite(query)

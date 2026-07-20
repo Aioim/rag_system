@@ -327,4 +327,4 @@ class TestMinerUConfig:
 
         cfg = settings.ingestion.mineru
         assert cfg.device == "cpu"
-        assert cfg.models_dir == "models/mineru"
+        assert cfg.models_dir == "local_models/mineru"

@@ -4,7 +4,7 @@
 
 **Goal:** 在现有 `src/model/` 模块上增加 Embedding/Reranker/LLM 三类模型的 LoRA 微调能力，LLM 额外支持云端大模型黑盒蒸馏。
 
-**Architecture:** 在 `src/model/finetune/` 下新建微调子包，以 `BaseTrainer` 抽象基类统一三种 Trainer 的接口，`FinetuneConfig` 走 Pydantic + YAML 配置体系，CLI 和 Python API 双入口，LoRA 适配器存储在 `models/finetuned/` 下。
+**Architecture:** 在 `src/model/finetune/` 下新建微调子包，以 `BaseTrainer` 抽象基类统一三种 Trainer 的接口，`FinetuneConfig` 走 Pydantic + YAML 配置体系，CLI 和 Python API 双入口，LoRA 适配器存储在 `local_models/finetuned/` 下。
 
 **Tech Stack:** PEFT (LoRA), HuggingFace Trainer, sentence-transformers, datasets, accelerate, argparse
 
@@ -101,7 +101,7 @@ class DistillationConfig(BaseModel):
 class FinetuneConfig(BaseModel):
     """微调总配置"""
 
-    output_dir: Path = Field(default=Path("models/finetuned"), description="LoRA 适配器输出目录")
+    output_dir: Path = Field(default=Path("local_models/finetuned"), description="LoRA 适配器输出目录")
     device: Literal["auto", "cuda", "cpu"] = "auto"
     data_dir: Path = Field(default=Path("data/finetune"), description="训练数据默认目录")
     training: TrainingConfig = Field(default_factory=TrainingConfig)
@@ -146,7 +146,7 @@ class FinetuneConfig(BaseModel):
         distill_raw = finetune_cfg.get("distillation", {})
 
         return cls(
-            output_dir=Path(finetune_cfg.get("output_dir", "models/finetuned")),
+            output_dir=Path(finetune_cfg.get("output_dir", "local_models/finetuned")),
             device=finetune_cfg.get("device", "auto"),
             data_dir=Path(finetune_cfg.get("data_dir", "data/finetune")),
             training=TrainingConfig(**training_raw) if training_raw else TrainingConfig(),
@@ -244,9 +244,9 @@ class TestFinetuneConfig:
         assert cfg.distillation.alpha == 0.5
 
     def test_resolve_output_dir_relative(self):
-        cfg = FinetuneConfig(output_dir=Path("models/finetuned"))
+        cfg = FinetuneConfig(output_dir=Path("local_models/finetuned"))
         resolved = cfg.resolve_output_dir(Path("/project"))
-        assert resolved == Path("/project/models/finetuned")
+        assert resolved == Path("/project/local_models/finetuned")
 
     def test_resolve_output_dir_absolute(self):
         cfg = FinetuneConfig(output_dir=Path("/absolute/path"))
@@ -2485,7 +2485,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 # 模型微调 & 蒸馏
 # --------------------------------------------------------------------------
 finetune:
-  output_dir: models/finetuned       # LoRA 适配器输出目录（相对 PROJECT_ROOT）
+  output_dir: local_models/finetuned       # LoRA 适配器输出目录（相对 PROJECT_ROOT）
   device: auto                       # auto | cuda | cpu
   data_dir: data/finetune            # 训练数据默认目录
 
@@ -2578,7 +2578,7 @@ python -m model.finetune remove --name my-emb
 1. 准备指令数据（instruction + input + output）
 2. 用 `--teacher` 指定云端大模型，自动调用 API 生成教师答案
 3. 混合教师答案和人工标注训练学生模型
-4. 输出 LoRA 适配器到 `models/finetuned/`
+4. 输出 LoRA 适配器到 `local_models/finetuned/`
 
 ### 配置
 

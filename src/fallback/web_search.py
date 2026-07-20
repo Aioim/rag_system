@@ -65,10 +65,9 @@ class WebSearcher:
     async def _do_search(self, query: str) -> list[dict]:
         """在线程池中执行 ddgs 搜索（同步库，避免阻塞事件循环）"""
         timeout = settings.web_search.timeout_seconds
-        loop = asyncio.get_running_loop()
         try:
             return await asyncio.wait_for(
-                loop.run_in_executor(None, self._sync_search, query),
+                asyncio.to_thread(self._sync_search, query),
                 timeout=timeout,
             )
         except TimeoutError:

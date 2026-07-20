@@ -10,10 +10,10 @@ import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from fallback.handler import FallbackHandler
     from models.llm import LLMProtocol
 
 from fallback import get_fallback_handler
-from fallback.handler import FallbackHandler
 from generation.layer import GenerationLayer
 from logger import logger
 from models.context import PipelineContext
@@ -70,6 +70,7 @@ class RAGPipeline:
         ctx = PipelineContext(query=query, collection=collection)
         ctx.mode = mode
         ctx.max_iterations = max_iterations
+        ctx.original_query = query  # 确保异常降级时不会保存空字符串
 
         if mode == "react":
             return await self._run_react(
@@ -83,6 +84,10 @@ class RAGPipeline:
             raise
         except Exception:
             logger.exception("查询理解层异常，使用原始 query 降级继续")
+            # 确保降级时 ctx 处于一致状态
+            ctx.query = query
+            ctx.original_query = query
+            ctx.needs_clarification = False
 
         if ctx.needs_clarification:
             self._record_elapsed(ctx, t0)
@@ -98,7 +103,7 @@ class RAGPipeline:
             ctx.retrieval_eval = RetrievalEval.INSUFFICIENT
 
         # ---- 3. 兜底处理 ------------------------------------------------
-        need_short_circuit = await self._apply_fallback(ctx, t0, query, session_id)
+        ctx, need_short_circuit = await self._apply_fallback(ctx, t0, query, session_id)
         if need_short_circuit:
             return ctx
 
@@ -109,7 +114,7 @@ class RAGPipeline:
             raise
         except Exception:
             logger.exception("生成层异常，返回兜底消息")
-            self.fallback.no_answer(ctx)
+            ctx = self.fallback.no_answer(ctx)
 
         # ---- 5. 记录 ----------------------------------------------------
         self._record_elapsed(ctx, t0)
@@ -122,8 +127,8 @@ class RAGPipeline:
         t0: float,
         query: str,
         session_id: str | None,
-    ) -> bool:
-        """兜底处理；返回 True 表示已短路（无需进入生成层）"""
+    ) -> tuple[PipelineContext, bool]:
+        """兜底处理；返回 (可能更新的 ctx, 短路标志)"""
         if ctx.retrieval_eval is RetrievalEval.NEED_MORE:
             try:
                 ctx = await self.fallback.handle(ctx, self.retrieval_layer)
@@ -141,14 +146,14 @@ class RAGPipeline:
                 raise
             except Exception:
                 logger.exception("兜底层异常，降级为诚实告知")
-                self.fallback.no_answer(ctx)
+                ctx = self.fallback.no_answer(ctx)
 
             if ctx.fallback_level in (FallbackLevel.NO_ANSWER, FallbackLevel.WEB_SEARCH):
                 self._record_elapsed(ctx, t0)
                 await self._save_to_session(session_id, query, ctx.answer)
-                return True
+                return ctx, True
 
-        return False
+        return ctx, False
 
     async def _run_react(
         self,
@@ -171,24 +176,30 @@ class RAGPipeline:
             query=query, collection=collection,
             mode="react", max_iterations=max_iterations,
         )
-        ctx.original_query = query
+        original_query = query  # 保存原始 query，用于会话记录和兜底
+        ctx.original_query = original_query
 
         # ---- 1. 别名映射 ------------------------------------------------
         try:
-            from config.aliases import resolve_aliases_in_text
-            query = resolve_aliases_in_text(query)
-            ctx.query = query
+            from query.aliases import resolve_aliases_in_text
+            resolved_query = resolve_aliases_in_text(query)
+            ctx.query = resolved_query
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning("ReAct 别名映射失败，使用原始 query")
+            resolved_query = query
 
         # ---- 2. ReAct Agent 循环 ----------------------------------------
         try:
             agent = get_react_agent(self._llm, None, None)
-            result = await agent.run(query, collection)
+            result = await agent.run(resolved_query, collection)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("ReAct Agent 异常，降级到 linear 模式")
             return await self.run(
-                query, session_id, collection, mode="linear"
+                original_query, session_id, collection, mode="linear"
             )
 
         ctx.react_traces = result.react_traces
@@ -207,6 +218,8 @@ class RAGPipeline:
             try:
                 ctx.rewritten_queries = list(dict.fromkeys(search_queries))
                 ctx = await self.retrieval_layer.retrieve(ctx)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("ReAct 合并检索异常")
 
@@ -216,22 +229,18 @@ class RAGPipeline:
             if ctx.retrieval_eval is None:
                 ctx.retrieval_eval = self_evaluate(ctx.reranked)
 
-            if ctx.retrieval_eval is RetrievalEval.INSUFFICIENT and not web_searched:
-                try:
-                    ctx = await self.fallback.handle(ctx)
-                except Exception:
-                    logger.exception("ReAct 兜底异常")
-
-            need_short_circuit = await self._apply_fallback(ctx, t0, query, session_id)
+            ctx, need_short_circuit = await self._apply_fallback(ctx, t0, original_query, session_id)
             if need_short_circuit:
                 return ctx
 
         # ---- 5. 生成 ----------------------------------------------------
         try:
             ctx = await self.generation_layer.generate(ctx)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("ReAct 生成层异常")
-            self.fallback.no_answer(ctx)
+            ctx = self.fallback.no_answer(ctx)
 
         # ---- 6. 记录 ----------------------------------------------------
         self._record_elapsed(ctx, t0)
@@ -246,7 +255,7 @@ class RAGPipeline:
                 }
                 for t in result.react_traces
             ]
-        await self._save_to_session(session_id, query, ctx.answer)
+        await self._save_to_session(session_id, original_query, ctx.answer)
         return ctx
 
     async def run_stream(
@@ -278,11 +287,14 @@ class RAGPipeline:
         t0 = time.perf_counter()
         search_queries: list[str] = []
         web_searched = False
+        original_query = query  # 保存原始 query，用于会话记录
 
         # 1. 别名映射
         try:
-            from config.aliases import resolve_aliases_in_text
+            from query.aliases import resolve_aliases_in_text
             query = resolve_aliases_in_text(query)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning("流式别名映射失败")
 
@@ -302,6 +314,8 @@ class RAGPipeline:
                 if not show_reasoning and event.event in ("thought", "action", "observation"):
                     continue
                 yield event
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("ReAct Agent 流式异常")
             yield SSEEvent("done", {"answer": "", "sources": [], "confidence": 0.0})
@@ -309,11 +323,15 @@ class RAGPipeline:
 
         # 3. 合并检索（用 Agent 搜过的所有 query）
         ctx = PipelineContext(query=query, collection=collection, mode="react")
-        ctx.original_query = query
+        ctx.original_query = original_query
+        # 注：流式模式下 react_traces 不完整（Agent.run_stream 仅产出事件，
+        # 不含完整的 ReActTrace 列表），下游组件不应依赖流式 ctx.react_traces。
         if search_queries:
             try:
                 ctx.rewritten_queries = list(dict.fromkeys(search_queries))
                 ctx = await self.retrieval_layer.retrieve(ctx)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("流式合并检索异常")
 
@@ -321,6 +339,8 @@ class RAGPipeline:
         if ctx.retrieval_eval is RetrievalEval.NEED_MORE:
             try:
                 ctx = await self.fallback.handle(ctx, self.retrieval_layer)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("流式补充检索异常")
                 ctx.is_fallback = True
@@ -329,18 +349,39 @@ class RAGPipeline:
         if ctx.retrieval_eval is RetrievalEval.INSUFFICIENT and not web_searched:
             try:
                 ctx = await self.fallback.handle(ctx)
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("流式兜底异常")
+
+        # 兜底短路：联网搜索或诚实告知后跳过生成（与 _run_react 的 _apply_fallback 一致）
+        if ctx.fallback_level in (FallbackLevel.NO_ANSWER, FallbackLevel.WEB_SEARCH):
+            self._record_elapsed(ctx, t0)
+            await self._save_to_session(session_id, original_query, ctx.answer)
+            yield SSEEvent("done", {
+                "answer": ctx.answer,
+                "sources": [
+                    {"doc_id": s.doc_id, "doc_title": s.doc_title,
+                     "chunk_text": s.chunk_text[:200], "score": s.score}
+                    for s in (ctx.sources or [])
+                ],
+                "confidence": ctx.confidence,
+                "is_fallback": ctx.is_fallback,
+                "fallback_level": ctx.fallback_level.value,
+            })
+            return
 
         # 5. 生成
         try:
             ctx = await self.generation_layer.generate(ctx)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("流式生成异常")
             self.fallback.no_answer(ctx)
 
         self._record_elapsed(ctx, t0)
-        await self._save_to_session(session_id, query, ctx.answer)
+        await self._save_to_session(session_id, original_query, ctx.answer)
 
         yield SSEEvent("done", {
             "answer": ctx.answer,
