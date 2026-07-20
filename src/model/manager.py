@@ -81,6 +81,7 @@ class ModelManager:
                 max_retries=cfg.max_retries,
                 hf_token=token,
                 endpoint=cfg.hf_endpoint,
+                download_source=cfg.download_source,
             )
             self._defaults = dict(cfg.default_models)
             self._cache_dir = cache_dir
