@@ -14,15 +14,15 @@ Model 模块提供统一的模型下载和管理能力，支持从 HuggingFace H
 ```
 rag0709/
 ├── config/
-│   └── defaults.yaml          ← model 配置段（缓存目录/默认模型/重试参数）
+│   └── {env}.yaml             ← model 配置段（缓存目录/默认模型/重试参数）
 └── src/model/
     ├── __init__.py            # 导出 + 全局单例 models
-    ├── downloader.py          # ModelDownloader — HuggingFace 下载引擎
+    ├── downloader.py          # 下载策略（HfStrategy / MsStrategy / AutoStrategy）+ ModelDownloader
     ├── manager.py             # ModelManager — 模型管理器单例
     └── README.md
 ```
 
-模型文件存储在 `PROJECT_ROOT/models/` 下，以 `{org}/{model_name}` 为目录结构，如 `models/BAAI/bge-large-zh-v1.5/`。
+模型文件存储在 `PROJECT_ROOT/local_models/` 下，以 `{org}/{model_name}` 为目录结构，如 `local_models/BAAI/bge-large-zh-v1.5/`。
 
 ## 快速开始
 
@@ -38,7 +38,7 @@ print(models.status())
 
 # 下载 embedding 模型（按类型名）
 path = models.download("embedding")
-print(path)  # → .../models/BAAI/bge-large-zh-v1.5
+print(path)  # → .../local_models/BAAI/bge-large-zh-v1.5
 
 # 下载特定模型（按 HuggingFace repo_id）
 path = models.download("BAAI/bge-reranker-v2-m3")
@@ -59,18 +59,34 @@ models.remove("rerank")
 
 ## 配置
 
-模型下载行为由 `config/defaults.yaml` 中的 `model:` 段控制：
+模型下载行为由 `config/{env}.yaml` 中的 `model:` 段控制：
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `cache_dir` | `models` | 模型下载根目录（相对于 PROJECT_ROOT） |
+| `cache_dir` | `local_models` | 模型下载根目录（相对于 PROJECT_ROOT） |
 | `default_models.embedding` | `BAAI/bge-large-zh-v1.5` | 默认 embedding 模型 |
 | `default_models.rerank` | `BAAI/bge-reranker-v2-m3` | 默认 reranker 模型 |
 | `default_models.llm` | `Qwen/Qwen2.5-1.5B-Instruct` | 默认本地 LLM（预留） |
 | `hf_token_env` | `HUGGINGFACE_TOKEN` | HF Token 环境变量名 |
 | `max_retries` | `3` | 网络错误重试次数 |
+| `download_source` | `auto` | 下载源: `huggingface` / `modelscope` / `auto` |
 
 在 `.env` 中设置 `HUGGINGFACE_TOKEN=hf_xxx` 可访问需要授权的模型（BGE 系列需要）。
+
+## 下载源切换
+
+通过 `model.download_source` 配置选择下载源：
+
+- **`huggingface`** — 使用 HuggingFace Hub（通过 `hf_endpoint` 可指定镜像站）
+- **`modelscope`** — 使用 ModelScope（魔搭），国内直连免 token
+- **`auto`**（默认）— 优先尝试 ModelScope，失败自动回退 HuggingFace
+
+```python
+# 编程方式切换（需在 ModelManager 初始化前设置）
+from config import settings
+settings.apply_overrides("model.download_source=modelscope")
+```
+
 
 ## 与下游模块集成（后续开发）
 
@@ -141,11 +157,11 @@ python -m model.finetune remove --name my-emb
 1. 准备指令数据（instruction + input + output）
 2. 用 `--teacher` 指定云端大模型，自动调用 API 生成教师答案
 3. 混合教师答案和人工标注训练学生模型
-4. 输出 LoRA 适配器到 `models/finetuned/`
+4. 输出 LoRA 适配器到 `local_models/finetuned/`
 
 ### 配置
 
-微调参数通过 `config/defaults.yaml` 的 `finetune:` 段控制，CLI 参数可覆盖。
+微调参数通过 `config/{env}.yaml` 的 `finetune:` 段控制，CLI 参数可覆盖。
 
 ### 依赖
 
