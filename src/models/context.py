@@ -1,10 +1,16 @@
 """Online PipelineContext — QA 链路数据容器"""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from models.api import Source
 from models.chunk import Chunk
 from models.enums import FallbackLevel, Intent, RetrievalEval
 from models.session import Session
+
+if TYPE_CHECKING:
+    from models.react_trace import ReActTrace
 
 
 @dataclass
@@ -27,6 +33,6 @@ class PipelineContext:
     needs_clarification: bool = False
     clarification_question: str | None = None
     metadata: dict = field(default_factory=dict)
-    react_traces: list = field(default_factory=list)  # list[ReActTrace]
+    react_traces: list[ReActTrace] = field(default_factory=list)
     mode: str = "linear"
     max_iterations: int = 5

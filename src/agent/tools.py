@@ -1,15 +1,19 @@
 """ReAct Agent 工具定义：SearchTool / WebSearchTool"""
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from config import settings
+from models.chunk import Chunk
 
 if TYPE_CHECKING:
     from fallback.web_search import WebSearcher
     from retrieval.layer import RetrievalLayer
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,6 +33,7 @@ class SearchTool:
         self._retrieval = retrieval_layer
 
     async def run(self, query: str, collection: str) -> ToolResult:
+        # 延迟导入避免循环引用（agent.tools → models.context → models.react_trace）
         from models.context import PipelineContext
 
         t0 = time.perf_counter()
@@ -39,8 +44,7 @@ class SearchTool:
                 ctx, top_k=settings.agent.search_top_k
             )
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning("SearchTool 检索失败: %s", e)
+            _logger.warning("SearchTool 检索失败: %s", e)
             return ToolResult(
                 tool="search", query=query, content="",
                 chunk_count=0,
@@ -56,7 +60,7 @@ class SearchTool:
         )
 
     @staticmethod
-    def _format_chunks(chunks: list) -> str:
+    def _format_chunks(chunks: list[Chunk]) -> str:
         lines: list[str] = []
         for c in chunks:
             text = c.text.replace("\n", " ")[:settings.agent.max_observation_chars]
@@ -75,8 +79,7 @@ class WebSearchTool:
         try:
             content = await self._searcher.search(query)
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning("WebSearchTool 失败: %s", e)
+            _logger.warning("WebSearchTool 失败: %s", e)
             content = ""
 
         return ToolResult(
