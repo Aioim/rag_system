@@ -123,7 +123,7 @@ result = models.finetune("llm", data_path="data/finetune/instructions.jsonl")
 
 # LLM 蒸馏（云端大模型 → 本地小模型）
 result = models.finetune("llm", data_path="data/finetune/instructions.jsonl",
-                         teacher="claude-sonnet-5", alpha=0.3)
+                         teacher="deepseek-v4-pro", alpha=0.3)
 ```
 
 ### CLI
@@ -134,7 +134,7 @@ python -m model.finetune embedding --data data/finetune/triplets.jsonl --name my
 
 # 蒸馏 LLM
 python -m model.finetune llm --data data/finetune/instructions.jsonl \
-    --teacher claude-sonnet-5 --alpha 0.3
+    --teacher deepseek-v4-pro --alpha 0.3
 
 # 管理
 python -m model.finetune list

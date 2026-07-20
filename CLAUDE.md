@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 向量数据库 | FAISS (第一期)；后续可迁移至 Milvus 2.4+ |
 | Embedding | BGE-large-zh-v1.5 (本地) |
 | Reranker | BGE-Reranker v2-m3 Cross-Encoder (本地) |
-| LLM | Claude Sonnet 5 / Haiku 4.5 (云端 API) |
+| LLM | DeepSeek-v4-Pro / DeepSeek-v4-Flash (云端 API) |
 | 会话存储 | SQLite |
 | 配置管理 | Pydantic v2 + YAML + 环境变量三级合并 |
 | 安全 | Fernet 内存加密 + .env 安全加载 + 日志脱敏 |
@@ -46,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 rag0709/
 ├── config/                    # YAML 配置数据
-│   ├── defaults.yaml          # 默认配置（检索/分块/LLM/FAISS/兜底等全部配置项）
+│   ├── dev.yaml               # 开发环境配置（ENV=dev 时读取；其他环境对应 {env}.yaml）
 │   ├── aliases.yaml           # 用户术语 → 标准术语映射（如 "工资条"→"薪资明细"）
 │   └── prompts/               # 按意图分类的 Prompt 模板（concept/procedure/compare/lookup）
 ├── src/
@@ -163,7 +163,7 @@ settings.reload()                 # 热重载
 resolve_alias("工资条")           # → "薪资明细"
 ```
 
-配置优先级：**CLI 覆盖 > 环境变量(`RETRIEVAL__TOP_K=10`) > `{env}.yaml` > `defaults.yaml` > 代码默认值**
+配置优先级：**CLI 覆盖 > 环境变量(`RETRIEVAL__TOP_K=10`) > `{env}.yaml` > 代码默认值**
 
 环境变量注入采用**白名单过滤**：仅识别以配置段根名（如 `RETRIEVAL`）开头的双层嵌套变量（含 `__`）、顶层标量 `ENV`/`DEBUG`，或带 `RAG__` 逃生前缀的任意变量。系统环境变量（`PATH`/`TEMP`/`OS` 等）不会再误入配置。
 
@@ -197,7 +197,7 @@ models.get_path("embedding")      # → Path 或 None（不触发下载）
 models.list_downloaded()          # → {model_id: local_path, ...}
 ```
 
-模型存储在 `PROJECT_ROOT/models/` 下，以 `{org}/{model_name}` 为目录结构。首次运行需在 `.env` 中设置 `HUGGINGFACE_TOKEN=hf_xxx` 以访问 BGE 系列模型。
+模型存储在 `PROJECT_ROOT/local_models/` 下，以 `{org}/{model_name}` 为目录结构。首次运行需在 `.env` 中设置 `HUGGINGFACE_TOKEN=hf_xxx` 以访问 BGE 系列模型。
 
 **微调 & 蒸馏**：
 
@@ -210,7 +210,7 @@ result = models.finetune("embedding", data_path="data/finetune/triplets.jsonl")
 result = models.finetune("reranker", data_path="data/finetune/rerank_data.jsonl")
 # LLM SFT / 蒸馏（云端大模型 → 本地小模型 LoRA）
 result = models.finetune("llm", data_path="data/finetune/instructions.jsonl",
-                         teacher="claude-sonnet-5", alpha=0.3)
+                         teacher="deepseek-v4-pro", alpha=0.3)
 # → result.adapter_path = Path  # LoRA 适配器保存路径
 
 # 管理已微调适配器
@@ -229,7 +229,7 @@ CLI 入口：`python -m model.finetune <type> --data <path> [--name <n>] [--teac
 | reranker | query, document, label (0/1) |
 | llm | instruction, input, output |
 
-微调配置由 `config/defaults.yaml` 的 `finetune:` 段控制（LoRA rank/训练轮次/学习率/蒸馏温度等），通过 `python -m model.finetune config` 查看。
+微调配置由 `config/{env}.yaml` 的 `finetune:` 段控制（LoRA rank/训练轮次/学习率/蒸馏温度等），通过 `python -m model.finetune config` 查看。
 
 ### 查询理解模块
 
@@ -300,7 +300,7 @@ reset_generation_layer()            # 测试用重置
 
 **Pipeline 流程**：INSUFFICIENT 短路（不调 LLM）→ NEED_MORE 正常生成+partial 标注 → SUFFICIENT 完整流程（组装 → 路由 → 生成 → 核查 → 引用）。
 
-**路由规则**（纯规则，本期）：lookup/procedure → lightweight（Haiku）；concept/compare → default（Sonnet）。温度从 `settings.llm.temperatures` 按 intent 自动选取。
+**路由规则**（纯规则，本期）：lookup/procedure → lightweight（Flash）；concept/compare → default（Pro）。温度从 `settings.llm.temperatures` 按 intent 自动选取。
 
 **事实核查**：调用轻量模型拆分答案为断言列表，逐条判断 supported/unsupported/contradicted，在答案末尾注入警示标注。核查失败不阻塞答案返回。
 
@@ -432,7 +432,7 @@ ctx = await pipeline.run(Path("docs/员工手册.md"), collection="hr_docs")
 | `MinerUParser` | `mineru` | pdf | magic-pdf>=0.6 |
 | `DirectParser` | `direct` | md, markdown, txt | 无 |
 
-切换 PDF 解析器：修改 `config/defaults.yaml` 中 `ingestion.parsers.pdf` 为 `pymupdf4llm` 或 `mineru`。
+切换 PDF 解析器：修改 `config/{env}.yaml` 中 `ingestion.parsers.pdf` 为 `pymupdf4llm` 或 `mineru`。
 
 **配置**（`settings.ingestion`）：
 | 配置项 | 默认值 | 说明 |
@@ -440,7 +440,7 @@ ctx = await pipeline.run(Path("docs/员工手册.md"), collection="hr_docs")
 | `parsed_doc_dir` | `data/parsed_docs` | 解析后 Markdown 输出目录 |
 | `parsers` | `{pdf: docling, docx: docling, md: direct, ...}` | 文件扩展名 → 解析器名称映射 |
 | `mineru.device` | `cpu` | MinerU 设备: cpu / cuda / mps |
-| `mineru.models_dir` | `models/mineru` | MinerU 模型权重目录 |
+| `mineru.models_dir` | `local_models/mineru` | MinerU 模型权重目录 |
 
 ### 会话模块
 

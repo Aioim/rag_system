@@ -79,7 +79,7 @@ class LLMTrainer(BaseTrainer):
     """LLM 微调/蒸馏
 
     基座: Qwen3-0.6B (默认)
-    教师: 云端 API（Claude/GPT 等）
+    教师: 云端 API（DeepSeek/GPT 等）
 
     蒸馏流程:
       1. generate_teacher_labels(data_path) → 用教师模型生成答案
@@ -172,7 +172,7 @@ class LLMTrainer(BaseTrainer):
         """调用云端教师模型生成答案。
 
         优先走项目的 LLM 路由模块；若模块未就绪，
-        则使用 ANTHROPIC_API_KEY 环境变量直接调 Claude API 作为过渡。
+        则使用 DEEPSEEK_API_KEY 环境变量直接调 DeepSeek API 作为过渡。
         """
         # 尝试走项目 LLM 路由
         try:
@@ -185,35 +185,35 @@ class LLMTrainer(BaseTrainer):
             )
             return response.content
         except (ImportError, AttributeError):
-            pass  # LLM 路由模块未就绪，降级到 Anthropic API 直调
+            pass  # LLM 路由模块未就绪，降级到 DeepSeek API 直调
         except Exception as e:
-            logger.warning("LLM 路由调用失败: %s，降级到 Anthropic API 直调", e)
+            logger.warning("LLM 路由调用失败: %s，降级到 DeepSeek API 直调", e)
 
-        # 过渡方案：直接调 Anthropic API
+        # 过渡方案：直接调 DeepSeek API
         # 优先通过 secrets_manager 获取，降级到环境变量
         try:
             from security import secrets as _sec
-            secret_obj = _sec.get_secret("ANTHROPIC_API_KEY", required=False)
-            api_key = str(secret_obj) if secret_obj else os.getenv("ANTHROPIC_API_KEY")
+            secret_obj = _sec.get_secret("DEEPSEEK_API_KEY", required=False)
+            api_key = str(secret_obj) if secret_obj else os.getenv("DEEPSEEK_API_KEY")
         except Exception:
-            api_key = os.getenv("ANTHROPIC_API_KEY")
+            api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             raise RuntimeError(
-                "教师模型 API 密钥未配置。请设置 ANTHROPIC_API_KEY 环境变量，"
+                "教师模型 API 密钥未配置。请设置 DEEPSEEK_API_KEY 环境变量，"
                 "或等待 src/generation/ 模块实现后走 LLM 路由。"
             )
 
-        import anthropic
+        from openai import OpenAI
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
-                message = client.messages.create(
+                client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com", timeout=60.0)
+                message = client.chat.completions.create(
                     model=self.teacher_model,
                     max_tokens=2048,
                     messages=[{"role": "user", "content": f"{instruction}\n\n{input_text}"}],
                 )
-                return message.content[0].text
+                return message.choices[0].message.content
             except Exception:
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)

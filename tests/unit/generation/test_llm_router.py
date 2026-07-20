@@ -71,9 +71,9 @@ class TestRouteResult:
     def test_is_dataclass_with_expected_fields(self):
         result = RouteResult(
             model_tier="default",
-            model_name="claude-sonnet-5",
+            model_name="deepseek-v4-pro",
             temperature=0.3,
             system_prompt="s",
             user_template="u",
         )
-        assert result.model_name == "claude-sonnet-5"
+        assert result.model_name == "deepseek-v4-pro"

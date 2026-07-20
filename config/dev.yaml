@@ -110,8 +110,8 @@ embedding:
 # LLM 路由 — ⚠️ api_key 禁止在 YAML 配置，请通过 .env 中的 LLM_API_KEY 设置
 # --------------------------------------------------------------------------
 llm:
-  default: claude-sonnet-5
-  lightweight: claude-haiku-4-5
+  default: deepseek-v4-pro
+  lightweight: deepseek-v4-flash
   local: null                    # 本地模型路径（可选）
   api_key_env: LLM_API_KEY
   api_base_url: null

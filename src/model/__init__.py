@@ -13,7 +13,7 @@
     result = models.finetune("embedding", data_path="data/finetune/triplets.jsonl")
 
     # 蒸馏
-    result = models.finetune("llm", data_path="...", teacher="claude-sonnet-5")
+    result = models.finetune("llm", data_path="...", teacher="deepseek-v4-pro")
 
     # 管理
     models.list_finetuned()

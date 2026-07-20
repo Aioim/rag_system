@@ -57,7 +57,7 @@ class TestLLMTrainer:
             _make_llm_with_teacher_jsonl(data_path, count=10)
 
             config = FinetuneConfig()
-            trainer = LLMTrainer(config, "test/model", teacher_model="claude-sonnet-5")
+            trainer = LLMTrainer(config, "test/model", teacher_model="deepseek-v4-pro")
             train_ds, eval_ds = trainer.load_data(data_path)
 
             assert len(train_ds) == 8
@@ -71,7 +71,7 @@ class TestLLMTrainer:
             _make_llm_jsonl(data_path, count=5)
 
             config = FinetuneConfig()
-            trainer = LLMTrainer(config, "test/model", teacher_model="claude-sonnet-5")
+            trainer = LLMTrainer(config, "test/model", teacher_model="deepseek-v4-pro")
             with pytest.raises(DataValidationError, match="teacher_output"):
                 trainer.load_data(data_path)
 
@@ -237,7 +237,7 @@ class TestTeacherGenerationResilience:
         )
 
         trainer = LLMTrainer(
-            FinetuneConfig(), "test/model", teacher_model="claude-sonnet-5"
+            FinetuneConfig(), "test/model", teacher_model="deepseek-v4-pro"
         )
         calls: list[str] = []
         monkeypatch.setattr(
@@ -265,7 +265,7 @@ class TestTeacherGenerationResilience:
         _make_llm_jsonl(data_path, count=3)
 
         trainer = LLMTrainer(
-            FinetuneConfig(), "test/model", teacher_model="claude-sonnet-5"
+            FinetuneConfig(), "test/model", teacher_model="deepseek-v4-pro"
         )
         monkeypatch.setattr(trainer, "_call_teacher", lambda ins, inp: "答")
         sleeps: list[float] = []

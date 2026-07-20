@@ -19,7 +19,7 @@
 │                                         │   │   │    │
 │                              Embedding  Reranker LLM │
 │                                                     │
-│  输出: models/finetuned/{name}/                      │
+│  输出: local_models/finetuned/{name}/                      │
 │    ├── adapter_config.json                           │
 │    ├── adapter_model.safetensors                     │
 │    └── metadata.yaml                                 │
@@ -57,7 +57,7 @@ pip install peft>=0.12.0 datasets>=2.19.0 accelerate>=0.30.0
 pip install sentence-transformers>=3.3
 
 # LLM 蒸馏需要（调用云端教师 API）
-pip install anthropic
+pip install openai
 ```
 
 ### 2.2 硬件要求
@@ -81,11 +81,11 @@ ANTHROPIC_API_KEY=sk-ant-xxx      # LLM 蒸馏的教师 API（可选，仅蒸馏
 
 ## 3. 配置
 
-### 3.1 YAML 配置（`config/defaults.yaml`）
+### 3.1 YAML 配置（`config/{env}.yaml`，如 `config/dev.yaml`）
 
 ```yaml
 finetune:
-  output_dir: models/finetuned       # LoRA 适配器输出目录
+  output_dir: local_models/finetuned       # LoRA 适配器输出目录
   device: auto                       # auto | cuda | cpu
   data_dir: data/finetune            # 训练数据默认目录
 
@@ -240,7 +240,8 @@ python -m model.finetune llm \
 # 用云端大模型为数据集生成答案
 python -m model.finetune llm \
     --data data/finetune/instructions.jsonl \
-    --teacher claude-sonnet-5 \
+    --teacher deepseek-v4-pro \
+
     --generate-only
 ```
 
@@ -253,7 +254,8 @@ python -m model.finetune llm \
 ```bash
 python -m model.finetune llm \
     --data data/finetune/instructions_with_teacher.jsonl \
-    --teacher claude-sonnet-5 \
+    --teacher deepseek-v4-pro \
+
     --alpha 0.3 \
     --name my-llm-distilled-v1
 ```
@@ -265,7 +267,8 @@ python -m model.finetune llm \
 ```bash
 python -m model.finetune llm \
     --data data/finetune/instructions.jsonl \
-    --teacher claude-sonnet-5 \
+    --teacher deepseek-v4-pro \
+
     --alpha 0.3 \
     --name my-llm-distilled-v1
 ```
@@ -288,7 +291,7 @@ python -m model.finetune info --name my-embedding-v2
 # 名称:       my-embedding-v2
 # 类型:       embedding
 # 基座模型:   BAAI/bge-large-zh-v1.5
-# 路径:       /project/models/finetuned/my-embedding-v2
+# 路径:       /project/local_models/finetuned/my-embedding-v2
 # 创建时间:   2026-07-12T14:30:00
 # 训练指标:   {'train_loss': 0.12, 'duration_seconds': 3600.5}
 # 训练参数:   {'epochs': 5, 'learning_rate': 0.0001, 'batch_size': 16, ...}
@@ -308,7 +311,7 @@ from model import models
 
 # === Embedding 微调 ===
 result = models.finetune("embedding", data_path="data/finetune/triplets.jsonl")
-print(result.adapter_path)   # → Path("models/finetuned/embedding_20260712_143000")
+print(result.adapter_path)   # → Path("local_models/finetuned/embedding_20260712_143000")
 print(result.metrics)        # → {"train_loss": 0.12, "duration_seconds": 1200.5}
 
 # 指定名称和参数
@@ -345,7 +348,7 @@ from model import models
 result = models.finetune(
     "llm",
     data_path="data/finetune/instructions.jsonl",
-    teacher="claude-sonnet-5",
+    teacher="deepseek-v4-pro",
     alpha=0.3,
     output_name="my-llm-distilled-v1",
 )
@@ -359,7 +362,7 @@ from model.finetune.config import FinetuneConfig, TrainingConfig, LoRAConfig
 
 # 构造自定义配置
 config = FinetuneConfig(
-    output_dir="models/finetuned",     # 或 Path 对象
+    output_dir="local_models/finetuned",     # 或 Path 对象
     device="cuda",                      # 强制使用 GPU
     training=TrainingConfig(
         epochs=10,
@@ -395,7 +398,7 @@ for name, info in adapters.items():
 
 # 获取适配器路径
 path = models.get_finetuned_path("my-embedding-v3")
-# → Path("models/finetuned/my-embedding-v3") 或 None
+# → Path("local_models/finetuned/my-embedding-v3") 或 None
 
 # 删除适配器
 models.remove_finetuned("my-embedding-v3")
@@ -430,7 +433,7 @@ else:
 │  阶段 1: 教师标签生成（一次性，可离线）            │
 │                                                   │
 │  instructions.jsonl ──→ 云端大模型 API ──→ 教师答案 │
-│  {instruction, input}    (Claude/GPT)              │
+│  {instruction, input}    (DeepSeek/GPT)            │
 │                                                   │
 │  输出: instructions_with_teacher.jsonl             │
 │    {instruction, input, output, teacher_output}    │
@@ -561,7 +564,7 @@ python -m model.finetune llm --data data/instructions.jsonl --batch-size 2
 
 ```bash
 # 手动删除损坏的适配器目录
-rm -rf models/finetuned/corrupted-adapter-name/
+rm -rf local_models/finetuned/corrupted-adapter-name/
 
 # 然后 list 命令恢复正常
 python -m model.finetune list

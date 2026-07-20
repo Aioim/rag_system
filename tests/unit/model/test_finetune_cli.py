@@ -29,17 +29,17 @@ class TestCliParser:
         parser = _build_parser()
         args = parser.parse_args([
             "llm", "--data", "data/instructions.jsonl",
-            "--teacher", "claude-sonnet-5", "--alpha", "0.3",
+            "--teacher", "deepseek-v4-pro", "--alpha", "0.3",
         ])
         assert args.command == "llm"
-        assert args.teacher == "claude-sonnet-5"
+        assert args.teacher == "deepseek-v4-pro"
         assert args.alpha == 0.3
 
     def test_llm_generate_only(self):
         parser = _build_parser()
         args = parser.parse_args([
             "llm", "--data", "data/instructions.jsonl",
-            "--teacher", "claude-sonnet-5", "--generate-only",
+            "--teacher", "deepseek-v4-pro", "--generate-only",
         ])
         assert args.generate_only is True
 

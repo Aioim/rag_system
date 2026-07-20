@@ -4,7 +4,7 @@
 
 Config 模块是 RAG 系统的统一配置中心，覆盖检索、分块、Embedding、LLM、会话、兜底策略等全部配置。
 
-- **多源合并**：YAML 默认值 → 环境变量 → CLI 覆盖，三级优先级
+- **多源合并**：`{env}.yaml` → 环境变量 → CLI 覆盖，三级优先级
 - **类型安全**：Pydantic v2 模型验证
 - **热重载**：`settings.reload()` 运行时重载
 - **别名映射**：用户术语 → 标准术语自动转换
@@ -14,7 +14,7 @@ Config 模块是 RAG 系统的统一配置中心，覆盖检索、分块、Embed
 ```
 rag0709/
 ├── config/                  ← 配置数据（代码外）
-│   ├── defaults.yaml        # RAG 默认配置
+│   ├── dev.yaml             # 开发环境配置（ENV=dev；其他环境对应 {env}.yaml）
 │   ├── aliases.yaml         # 术语别名映射
 │   └── prompts/             # Prompt 模板（按意图）
 │       ├── concept.yaml
@@ -38,7 +38,7 @@ from config import settings, resolve_alias
 # 访问配置
 settings.retrieval.top_k        # 5
 settings.embedding.model         # BAAI/bge-large-zh-v1.5
-settings.llm.default            # claude-sonnet-5
+settings.llm.default            # deepseek-v4-pro
 
 # 点号路径
 settings.get('retrieval.rrf_k')  # 60
@@ -59,7 +59,7 @@ settings.reload()
 ## 配置优先级
 
 ```
-CLI 覆盖  >  环境变量  >  {env}.yaml  >  defaults.yaml  >  代码默认值
+CLI 覆盖  >  环境变量  >  {env}.yaml  >  代码默认值
 ```
 
 环境变量使用双下划线 `__` 表示嵌套：
@@ -91,14 +91,16 @@ MILVUS__HOST=192.168.1.100
 
 ## 多环境配置
 
-创建 `config/prod.yaml` 覆盖默认值：
+系统直接读取 `config/{ENV}.yaml`（默认 `ENV=dev`，对应 `config/dev.yaml`）。不存在时回退到 Pydantic 模型代码默认值。
+
+创建环境配置文件（如 `config/prod.yaml`）：
 
 ```yaml
 env: prod
 milvus:
   host: milvus-prod.internal
 llm:
-  default: claude-opus-4-8
+  default: deepseek-v4-pro
 log:
   log_level: WARNING
 ```
@@ -106,3 +108,5 @@ log:
 ```bash
 ENV=prod python -c "from config import settings; print(settings.env)"  # prod
 ```
+
+> 创建新环境时，复制 `config/dev.yaml` 为 `config/{env}.yaml` 后按需修改即可。

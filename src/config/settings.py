@@ -147,8 +147,8 @@ class LLMConfig(_BaseConfig):
     安全约束：api_key 只能通过环境变量或 .env 文件设置，不允许在 YAML 中配置。
     使用 encrypted .env 时，值格式为 ENC[base64_ciphertext]。
     """
-    default: str = "claude-sonnet-5"
-    lightweight: str = "claude-haiku-4-5"
+    default: str = "deepseek-v4-pro"
+    lightweight: str = "deepseek-v4-flash"
     local: str | None = None
     api_key: SecretStr = Field(default=SecretStr(""), exclude=True)
     api_key_env: str = "LLM_API_KEY"
