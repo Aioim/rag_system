@@ -17,6 +17,9 @@ class ChatRequest:
     collection: str = "default"
     stream: bool = False
     top_k: int = 5
+    mode: str = "linear"
+    max_iterations: int = 5
+    show_reasoning: bool = False
 
 
 @dataclass
@@ -26,6 +29,7 @@ class ChatResponse:
     session_id: str = ""
     confidence: float = 0.0
     is_fallback: bool = False
+    react_traces: list | None = None
 
 
 @dataclass
