@@ -10,6 +10,7 @@ from models.chunk import Chunk
 from models.context import PipelineContext
 from models.document import Document
 from models.enums import DocumentStatus, FallbackLevel, Intent, RetrievalEval
+from models.react_trace import ReActTrace
 from models.llm import LLMProtocol
 from models.session import Message, Session
 
@@ -24,6 +25,7 @@ __all__ = [
     "LLMProtocol",
     "Message",
     "PipelineContext",
+    "ReActTrace",
     "RetrievalEval",
     "SearchRequest",
     "SearchResponse",

@@ -12,6 +12,9 @@ class TestPipelineContext:
         assert ctx.answer == ""
         assert ctx.confidence == 0.0
         assert ctx.is_fallback is False
+        assert ctx.react_traces == []
+        assert ctx.mode == "linear"
+        assert ctx.max_iterations == 5
 
     def test_with_results(self):
         ctx = PipelineContext(
@@ -23,3 +26,12 @@ class TestPipelineContext:
         assert ctx.answer == "答案"
         assert ctx.confidence == 0.85
         assert ctx.retrieval_eval == "sufficient"
+
+    def test_react_fields(self):
+        ctx = PipelineContext(
+            query="测试",
+            mode="react",
+            max_iterations=10,
+        )
+        assert ctx.mode == "react"
+        assert ctx.max_iterations == 10

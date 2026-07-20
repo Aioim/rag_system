@@ -27,3 +27,6 @@ class PipelineContext:
     needs_clarification: bool = False
     clarification_question: str | None = None
     metadata: dict = field(default_factory=dict)
+    react_traces: list = field(default_factory=list)  # list[ReActTrace]
+    mode: str = "linear"
+    max_iterations: int = 5
