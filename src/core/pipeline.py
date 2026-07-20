@@ -113,7 +113,7 @@ class RAGPipeline:
 
         # ---- 5. 记录 ----------------------------------------------------
         self._record_elapsed(ctx, t0)
-        await self._save_to_session(session_id, query, ctx.answer)
+        await self._save_to_session(session_id, ctx.original_query, ctx.answer)
         return ctx
 
     async def _apply_fallback(
@@ -309,6 +309,7 @@ class RAGPipeline:
 
         # 3. 合并检索（用 Agent 搜过的所有 query）
         ctx = PipelineContext(query=query, collection=collection, mode="react")
+        ctx.original_query = query
         if search_queries:
             try:
                 ctx.rewritten_queries = list(dict.fromkeys(search_queries))
@@ -316,7 +317,15 @@ class RAGPipeline:
             except Exception:
                 logger.exception("流式合并检索异常")
 
-        # 4. 兜底（INSUFFICIENT 且 Agent 未 web_search → 联网）
+        # 4. 兜底（与 _run_react 保持一致：NEED_MORE → 补充检索；INSUFFICIENT → 联网）
+        if ctx.retrieval_eval is RetrievalEval.NEED_MORE:
+            try:
+                ctx = await self.fallback.handle(ctx, self.retrieval_layer)
+            except Exception:
+                logger.exception("流式补充检索异常")
+                ctx.is_fallback = True
+                ctx.fallback_level = FallbackLevel.PARTIAL
+
         if ctx.retrieval_eval is RetrievalEval.INSUFFICIENT and not web_searched:
             try:
                 ctx = await self.fallback.handle(ctx)
