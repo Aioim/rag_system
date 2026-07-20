@@ -44,6 +44,7 @@ class APIConfig(_BaseConfig):
     host: str = "0.0.0.0"
     port: int = 8000
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    # 默认 "*" 仅适用于开发环境；生产环境由 RAGAppConfig 的 model_validator 阻止
     workers: int = 1
 
 
@@ -73,7 +74,7 @@ class RetrievalConfig(_BaseConfig):
 class MinerUConfig(BaseModel):
     """MinerU 解析器配置"""
     device: str = "cpu"  # cpu | cuda | mps
-    models_dir: str = "models/mineru"
+    models_dir: str = "local_models/mineru"
 
 
 class IngestionConfig(_BaseConfig):
@@ -219,7 +220,7 @@ class AliasConfig(_BaseConfig):
 
 class ModelConfig(_BaseConfig):
     """模型下载管理配置"""
-    cache_dir: Path = PROJECT_ROOT / "models"
+    cache_dir: Path = PROJECT_ROOT / "local_models"
     default_models: dict[str, str] = Field(default_factory=lambda: {
         "embedding": "BAAI/bge-large-zh-v1.5",
         "rerank": "BAAI/bge-reranker-v2-m3",
@@ -228,6 +229,7 @@ class ModelConfig(_BaseConfig):
     hf_token_env: str = "HUGGINGFACE_TOKEN"
     hf_endpoint: str | None = "https://hf-mirror.com"
     max_retries: int = 3
+    download_source: str = "auto"  # "huggingface" | "modelscope" | "auto"
 
 
 class LogConfig(_BaseConfig):
@@ -319,7 +321,7 @@ class FinetuneDistillationConfig(_BaseConfig):
 
 class FinetuneConfig(_BaseConfig):
     """模型微调 & 蒸馏配置"""
-    output_dir: Path = PROJECT_ROOT / "models" / "finetuned"
+    output_dir: Path = PROJECT_ROOT / "local_models" / "finetuned"
     device: str = "auto"
     data_dir: Path = PROJECT_ROOT / "data" / "finetune"
     training: FinetuneTrainingConfig = Field(default_factory=FinetuneTrainingConfig)
@@ -365,6 +367,16 @@ class RAGAppConfig(BaseModel):
     @classmethod
     def validate_env(cls, v: str) -> str:
         return v.lower()
+
+    @model_validator(mode="after")
+    def check_cors_in_prod(self) -> "RAGAppConfig":
+        """生产环境禁止 CORS 通配符 '*'，须显式配置业务域名"""
+        if self.env == "prod" and "*" in self.api.cors_origins:
+            raise ValueError(
+                "api.cors_origins 不允许在生产环境使用通配符 '*'，"
+                "请配置具体业务域名，例如 API__CORS_ORIGINS=https://your-app.example.com"
+            )
+        return self
 
     # 无嵌套（不含 __）时允许注入的顶层标量键
     _TOP_LEVEL_ENV_KEYS: ClassVar[set[str]] = {"env", "debug"}
@@ -627,15 +639,3 @@ __all__ = [
     "WebSearchConfig",
     "settings",
 ]
-
-if __name__ == "__main__":
-    print("=== RAG 配置测试 ===")
-    print(f"项目: {settings.project.name} v{settings.project.version}")
-    print(f"环境: {settings.env}")
-    print(f"API: {settings.api.host}:{settings.api.port}")
-    print(f"检索 Top-K: {settings.retrieval.top_k}")
-    print(f"分块大小: {settings.chunking.chunk_size}")
-    print(f"Embedding 模型: {settings.embedding.model}")
-    print(f"LLM 默认: {settings.llm.default}")
-    print(f"Milvus: {settings.milvus.host}:{settings.milvus.port}")
-    print(f"日志级别: {settings.log.log_level}")
