@@ -231,8 +231,8 @@ class ReActAgent:
         t0 = time.perf_counter()
         traces: list[ReActTrace] = []
         observation: str | None = None
-        seen_pairs: set[tuple[str, str]] = set()
-        consecutive_dup_count = 0
+        last_pair_key: tuple[str, str] | None = None
+        consecutive_count = 0
 
         yield SSEEvent("react_start", {"mode": "react", "query": query})
 
@@ -262,20 +262,21 @@ class ReActAgent:
             action = parsed["action"]
             search_query = parsed.get("query")
 
-            # 连续重复检测
+            # 连续重复检测（仅跟踪连续相同的 ACTION+QUERY，与 run() 一致）
             pair_key = (action, search_query or "")
-            if pair_key in seen_pairs:
-                consecutive_dup_count += 1
-                if consecutive_dup_count >= self._config.max_consecutive_duplicates:
-                    yield SSEEvent("thought", {
-                        "iteration": iteration,
-                        "thought": f"连续 {consecutive_dup_count} 轮重复，终止循环",
-                        "action": "finish",
-                    })
-                    break
+            if pair_key == last_pair_key:
+                consecutive_count += 1
             else:
-                consecutive_dup_count = 0
-            seen_pairs.add(pair_key)
+                consecutive_count = 1
+                last_pair_key = pair_key
+
+            if consecutive_count > 1 and consecutive_count >= self._config.max_consecutive_duplicates:
+                yield SSEEvent("thought", {
+                    "iteration": iteration,
+                    "thought": f"连续 {consecutive_count} 轮重复 {action}:{search_query}，终止循环",
+                    "action": "finish",
+                })
+                break
 
             # 推送 thought 事件
             yield SSEEvent("thought", {
