@@ -98,7 +98,7 @@ class FallbackHandler:
             ctx.is_fallback = True
             ctx.answer = web_result
             # 搜索结果视为中等置信度（非检索结果验证，但优于空白）
-            ctx.confidence = ctx.confidence or 0.5
+            ctx.confidence = ctx.confidence if ctx.confidence and ctx.confidence > 0 else 0.5
             logger.info("联网搜索成功 query=%.100s", ctx.query)
             return ctx
 

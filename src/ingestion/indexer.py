@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from typing import TYPE_CHECKING
 
 import faiss
@@ -62,6 +64,17 @@ def _create_index(dim: int, is_cosine: bool) -> faiss.Index:
 class FAISSIndexWriter:
     """将带 embedding 的 chunks 写入 FAISS 索引 + docstore"""
 
+    _write_locks: dict[str, threading.Lock] = {}
+    _write_locks_lock = threading.Lock()
+
+    @classmethod
+    def _get_write_lock(cls, collection: str) -> threading.Lock:
+        """获取指定 collection 的写入锁（按 collection 分桶以降低争用）"""
+        with cls._write_locks_lock:
+            if collection not in cls._write_locks:
+                cls._write_locks[collection] = threading.Lock()
+            return cls._write_locks[collection]
+
     @staticmethod
     def _create_new_index(cfg, dim: int, is_cosine: bool) -> faiss.Index:
         """按配置创建空索引（IVF_FLAT 或 Flat）"""
@@ -117,6 +130,13 @@ class FAISSIndexWriter:
         # 防路径遍历：与 retrieval/store.py 保持一致
         if not collection or "/" in collection or "\\" in collection or ".." in collection:
             raise ValueError(f"非法 collection 名称: {collection!r}")
+
+        # 并发保护：按 collection 串行化写操作
+        lock = self._get_write_lock(collection)
+        with lock:
+            self._write_impl(chunks, collection)
+
+    def _write_impl(self, chunks: list[Chunk], collection: str) -> None:
 
         from config import settings
 
@@ -190,10 +210,12 @@ class FAISSIndexWriter:
         start_id = index.ntotal
         index.add(vectors)
 
-        # 持久化索引
-        faiss.write_index(index, str(index_path))
+        # 持久化索引（先写临时文件，再原子替换，防止崩溃后索引损坏）
+        tmp_index_path = index_path.with_suffix(".faiss.tmp")
+        faiss.write_index(index, str(tmp_index_path))
+        os.replace(tmp_index_path, index_path)
 
-        # 持久化 docstore
+        # 持久化 docstore（同理原子写入）
         new_entries = {}
         for i, c in enumerate(chunks):
             entry = {
@@ -211,5 +233,7 @@ class FAISSIndexWriter:
             new_entries[c.chunk_id] = entry
 
         existing_docstore.update(new_entries)
-        with open(docstore_path, "w", encoding="utf-8") as f:
+        tmp_docstore_path = docstore_path.with_suffix(".json.tmp")
+        with open(tmp_docstore_path, "w", encoding="utf-8") as f:
             json.dump(existing_docstore, f, ensure_ascii=False)
+        os.replace(tmp_docstore_path, docstore_path)

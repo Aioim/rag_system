@@ -167,11 +167,15 @@ settings.reload()                 # 热重载
 
 环境变量注入采用**白名单过滤**：仅识别以配置段根名（如 `RETRIEVAL`）开头的双层嵌套变量（含 `__`）、顶层标量 `ENV`/`DEBUG`，或带 `RAG__` 逃生前缀的任意变量。系统环境变量（`PATH`/`TEMP`/`OS` 等）不会再误入配置。
 
+**`.env` 自动加载**：`ConfigManager` 初始化时会自动调用 `dotenv.load_dotenv()` 加载项目根目录的 `.env` 文件（明文值），随后通过 `SecureEnvLoader` 以 `override=True` 解密并覆盖 `ENC[...]` 加密字段。无需在应用启动时手动调用 `load_dotenv()` 或 `load_secure_dotenv()`。
+
 ### 安全模块
 
 ```python
 from security import secrets, load_secure_dotenv
 
+# .env 由 ConfigManager 自动加载（含 ENC[...] 解密），通常无需手动调用
+# 如需在配置初始化前加载 .env（例如独立脚本），可手动调用：
 load_secure_dotenv()             # 加载 .env，自动解密 ENC[...]；支持 export KEY= 前缀和行尾注释
 secrets.set_secret("key", "v")   # 内存加密存储
 secrets.get_secret("key")        # 动态解密

@@ -462,6 +462,13 @@ class ConfigManager:
 
     def _load_full_config(self) -> RAGAppConfig:
         """加载并合并所有配置源"""
+        # 0. 加载 .env 文件到 os.environ（仅明文值，不触发项目级导入链）
+        #    必须在读取任何环境变量之前执行，否则 .env 中的配置不生效
+        #    使用 PROJECT_ROOT 锚定 .env 路径，避免依赖 CWD
+        #    ENC[...] 加密字段在 initialize() 中由 SecureEnvLoader 解密覆盖
+        from dotenv import load_dotenv
+        load_dotenv(str(PROJECT_ROOT / ".env"))
+
         # 1. 加载 YAML 基础配置（按环境）
         env_name = self._overrides.get("env") or os.getenv("ENV", "dev")
         yaml_config = self._yaml_loader.load_environment(env=env_name)
@@ -485,6 +492,12 @@ class ConfigManager:
                 if not self._initialized:
                     try:
                         self._config = self._load_full_config()
+                        # .env 已由 _load_full_config 加载明文值；此处用 SecureEnvLoader
+                        # 以 override=True 重新加载，解密 ENC[...] 加密字段并覆盖对应环境变量
+                        # 必须在 _load_full_config 之后调用：此时 self._config 已就绪，
+                        # logger 初始化所需的 settings.log 可正常访问，不再触发循环导入
+                        from security.secure_env_loader import load_secure_dotenv
+                        load_secure_dotenv(str(PROJECT_ROOT / ".env"), override=True)
                         self._config.ingestion.initialize()
                         self._config.log.initialize()
                         self._config.session.initialize()

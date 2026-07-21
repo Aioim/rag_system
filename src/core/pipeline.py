@@ -42,7 +42,7 @@ class RAGPipeline:
         self.query_layer = QueryUnderstandingLayer(llm, session_manager)
         self.retrieval_layer = get_retrieval_layer()
         self.generation_layer = GenerationLayer(llm)
-        self.fallback: FallbackHandler = get_fallback_handler()
+        self.fallback: "FallbackHandler" = get_fallback_handler()
 
     async def run(
         self,
@@ -353,6 +353,7 @@ class RAGPipeline:
                 raise
             except Exception:
                 logger.exception("流式兜底异常")
+                ctx = self.fallback.no_answer(ctx)
 
         # 兜底短路：联网搜索或诚实告知后跳过生成（与 _run_react 的 _apply_fallback 一致）
         if ctx.fallback_level in (FallbackLevel.NO_ANSWER, FallbackLevel.WEB_SEARCH):
@@ -378,7 +379,7 @@ class RAGPipeline:
             raise
         except Exception:
             logger.exception("流式生成异常")
-            self.fallback.no_answer(ctx)
+            ctx = self.fallback.no_answer(ctx)
 
         self._record_elapsed(ctx, t0)
         await self._save_to_session(session_id, original_query, ctx.answer)

@@ -117,6 +117,15 @@ class RetrievalLayer:
         cross_encoder_failed = isinstance(cross_encoder_raw, BaseException)
         bm25_failed = isinstance(bm25_raw, BaseException)
 
+        # 重新抛出不应被吞没的关键异常
+        _CRITICAL_EXC = (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)
+        if isinstance(encoder_raw, _CRITICAL_EXC):
+            raise encoder_raw
+        if isinstance(cross_encoder_raw, _CRITICAL_EXC):
+            raise cross_encoder_raw
+        if isinstance(bm25_raw, _CRITICAL_EXC):
+            raise bm25_raw
+
         if encoder_failed:
             logger.error("Encoder 加载失败，检索不可用: %s", encoder_raw)
             ctx.candidates, ctx.reranked = [], []
@@ -188,7 +197,10 @@ class RetrievalLayer:
             ctx.reranked = mmr_select(reranked, vectors, effective_top_k, cfg.mmr_lambda)
         else:
             # CrossEncoder 不可用时，直接用 RRF 融合结果截断
+            # 将 RRF 得分映射为 rerank_score 代理值，避免自评恒为 INSUFFICIENT
             ctx.reranked = candidates[:effective_top_k]
+            for c in ctx.reranked:
+                c.rerank_score = c.metadata.get("rrf_score", 0.0)
         ctx.metadata["retrieval_rerank_ms"] = (time.perf_counter() - t2) * 1000
 
         # 5. Self-RAG 自评

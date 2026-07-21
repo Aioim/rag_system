@@ -9,12 +9,16 @@ from dataclasses import replace
 import numpy as np
 
 from config import settings
+from logger import logger
 from models.chunk import Chunk
 
 
 def _cosine_sim(a: list[float], b: list[float]) -> float:
     va = np.asarray(a, dtype=np.float32)
     vb = np.asarray(b, dtype=np.float32)
+    if va.shape != vb.shape:
+        logger.warning("embedding 维度不一致: %s vs %s，返回 0.0", va.shape, vb.shape)
+        return 0.0
     return float(np.dot(va, vb) / (np.linalg.norm(va) * np.linalg.norm(vb) + 1e-8))
 
 

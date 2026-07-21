@@ -109,12 +109,16 @@ class MinerUParser(BaseParser):
     @staticmethod
     def _patch_ocr_model_loading() -> None:
         """Monkey-patch: OCR 模型文件缺失时返回 dummy 避免 FileNotFoundError"""
-        from unittest.mock import MagicMock
 
         from magic_pdf.model.model_list import AtomicModel
         from magic_pdf.model.sub_modules.model_init import AtomModelSingleton
 
         _original_get = AtomModelSingleton.get_atom_model
+
+        class _DummyOCR:
+            """OCR 模型缺失时的降级占位，显式实现所需接口"""
+            def ocr(self, *args, **kwargs):
+                return [], None
 
         def _patched_get(self, atom_model_name, **kwargs):
             try:
@@ -125,9 +129,7 @@ class MinerUParser(BaseParser):
                     logging.getLogger(__name__).warning(
                         "MinerU OCR 模型文件缺失（不影响文本型 PDF 解析），使用 dummy 占位"
                     )
-                    dummy = MagicMock()
-                    dummy.ocr = lambda *a, **kw: ([], None)
-                    return dummy
+                    return _DummyOCR()
                 raise
 
         AtomModelSingleton.get_atom_model = _patched_get

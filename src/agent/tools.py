@@ -1,7 +1,6 @@
 """ReAct Agent 工具定义：SearchTool / WebSearchTool"""
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -13,7 +12,7 @@ if TYPE_CHECKING:
     from fallback.web_search import WebSearcher
     from retrieval.layer import RetrievalLayer
 
-_logger = logging.getLogger(__name__)
+from logger import logger
 
 
 @dataclass
@@ -44,7 +43,7 @@ class SearchTool:
                 ctx, top_k=settings.agent.search_top_k
             )
         except Exception as e:
-            _logger.warning("SearchTool 检索失败: %s", e)
+            logger.warning("SearchTool 检索失败: %s", e)
             return ToolResult(
                 tool="search", query=query, content="",
                 chunk_count=0,
@@ -79,7 +78,7 @@ class WebSearchTool:
         try:
             content = await self._searcher.search(query)
         except Exception as e:
-            _logger.warning("WebSearchTool 失败: %s", e)
+            logger.warning("WebSearchTool 失败: %s", e)
             content = ""
 
         return ToolResult(

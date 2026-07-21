@@ -35,11 +35,11 @@ class ParserStage:
         # 将解析后的 Markdown 写入磁盘
         md_path = self._write_markdown(ctx)
         ctx.document.metadata = {
+            **ctx.document.metadata,
             "source_path": str(source_path),
             "file_size": source_path.stat().st_size,
             "parsed_md_path": str(md_path),
             "parser": parser_name,
-            **ctx.document.metadata,  # 已有 key 优先，保留 setdefault 语义
         }
         ctx.document.status = DocumentStatus.DONE
 

@@ -2,6 +2,7 @@
 模型下载引擎 — 策略模式支持 HuggingFace / hf-mirror / ModelScope（魔搭）
 """
 
+import re
 import shutil
 import time
 from pathlib import Path
@@ -25,7 +26,10 @@ _WEIGHT_EXTS: frozenset = frozenset({
 def _validate_model_id(model_id: str) -> str:
     """验证 model_id 不含路径穿越字符或绝对路径"""
     sanitized = model_id.replace("\\", "/")
-    if sanitized != model_id:
+    # Windows 绝对路径（如 C:/foo/bar）
+    if re.match(r'^[a-zA-Z]:/', sanitized):
+        raise ValueError(f"model_id 不能是 Windows 绝对路径: {model_id}")
+    if sanitized != model_id and "\\" in model_id:
         raise ValueError(f"model_id 包含非法字符: {model_id}")
     if ".." in sanitized.split("/"):
         raise ValueError(f"model_id 包含路径穿越: {model_id}")

@@ -51,7 +51,7 @@ class DistillationTrainer(Trainer):
         # 与 transformers 约定一致：提供 num_items_in_batch 时用 sum/num_items
         # 归一化（梯度累积下正确），否则退回 token 平均（mean）
         reduction = "sum" if num_items_in_batch is not None else "mean"
-        loss_fct = torch.nn.CrossEntropyLoss(reduction=reduction)
+        loss_fct = torch.nn.CrossEntropyLoss(reduction=reduction, ignore_index=-100)
         hard_loss = loss_fct(
             shift_logits.view(-1, shift_logits.size(-1)),
             shift_labels.view(-1),

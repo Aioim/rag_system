@@ -1,7 +1,6 @@
 """ReActAgent — 思考→行动→观察 循环"""
 from __future__ import annotations
 
-import logging
 import re
 import time
 from collections.abc import AsyncGenerator
@@ -16,7 +15,7 @@ if TYPE_CHECKING:
     from models.chunk import Chunk
     from models.llm import LLMProtocol
 
-_logger = logging.getLogger(__name__)
+from logger import logger
 
 
 # ---- 输出解析器 ---------------------------------------------------------------
@@ -419,7 +418,7 @@ class ReActAgent:
             )
             return result.content
         except Exception:
-            _logger.exception("ReActAgent LLM 调用失败")
+            logger.exception("ReActAgent LLM 调用失败")
             return ""
 
     async def _execute_tool(
@@ -439,7 +438,7 @@ class ReActAgent:
                     chunk_count=0, elapsed_ms=0,
                 )
         except Exception as e:
-            _logger.warning("工具执行失败 %s: %s", action, e)
+            logger.warning("工具执行失败 %s: %s", action, e)
             return ToolResult(
                 tool=action, query=query, content=f"工具执行错误: {e}",
                 chunk_count=0, elapsed_ms=0,

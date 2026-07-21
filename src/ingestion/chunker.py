@@ -174,6 +174,14 @@ class SemanticChunker(_BaseSplitter):
         threshold_percentile: float = 0.9,
         buffer_size: int = 1,
     ):
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size 必须 > 0，收到: {chunk_size}")
+        if overlap < 0:
+            raise ValueError(f"overlap 不能为负数，收到: {overlap}")
+        if not 0 < threshold_percentile < 1:
+            raise ValueError(f"threshold_percentile 须在 (0,1) 区间，收到: {threshold_percentile}")
+        if buffer_size < 0:
+            raise ValueError(f"buffer_size 不能为负数，收到: {buffer_size}")
         self.embedding_model = embedding_model
         self.chunk_size = chunk_size
         self.overlap = overlap

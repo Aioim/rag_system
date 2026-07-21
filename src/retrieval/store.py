@@ -49,10 +49,20 @@ class FAISSStore:
         index_path = index_dir / "index.faiss"
         index = None
         if index_path.exists():
-            index = faiss.read_index(str(index_path))
+            try:
+                index = faiss.read_index(str(index_path))
+            except Exception as e:
+                raise RuntimeError(
+                    f"Collection '{self.collection}' FAISS 索引加载失败: {e}"
+                ) from e
             if isinstance(index, faiss.IndexIVFFlat):
                 index.nprobe = settings.faiss.nprobe
-                index.make_direct_map()   # MMR 需 reconstruct 原始向量
+                try:
+                    index.make_direct_map()   # MMR 需 reconstruct 原始向量
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Collection '{self.collection}' FAISS direct_map 构建失败: {e}"
+                    ) from e
 
         docstore = {}
         docstore_path = index_dir / "docstore.json"
