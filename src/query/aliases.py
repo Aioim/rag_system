@@ -7,18 +7,14 @@
 - 热重载：自动检测 YAML 文件变更
 - 并发安全：写路径持锁构建，读路径引用快照免锁
 
-YAML 格式（新旧兼容）：
+YAML 格式：
 
-    旧格式（扁平 key-value）：
-      "工资条": "薪资明细"
-
-    新格式（结构化条目）：
-      entries:
-        - aliases: ["工资条", "工资单"]
-          target: "薪资明细"
-        - aliases: ["系统"]
-          target: "内部系统"
-          context: ["IT", "登录", "vpn"]
+    entries:
+      - aliases: ["工资条", "工资单"]
+        target: "薪资明细"
+      - aliases: ["系统"]
+        target: "内部系统"
+        context: ["IT", "登录", "vpn"]
 """
 
 from __future__ import annotations
@@ -93,9 +89,7 @@ class AliasManager:
     ) -> tuple[dict[str, list[AliasEntry]], float] | None:
         """解析单个别名文件，返回 (索引, mtime)；文件缺失或解析失败返回 None
 
-        兼容两种 YAML 格式：
-        - 旧格式：扁平 dict[str, str]
-        - 新格式：``entries: [{aliases: [...], target: ..., context?: [...]}, ...]``
+        YAML 格式：``entries: [{aliases: [...], target: ..., context?: [...]}, ...]``
         """
         if not file_path.exists():
             logger.warning("别名文件不存在: %s", file_path)
@@ -110,20 +104,10 @@ class AliasManager:
 
         raw_entries: list[dict] = []
 
-        if isinstance(data, dict):
-            if "entries" in data:
-                # —— 新格式 ——
-                entries_list = data["entries"]
-                if isinstance(entries_list, list):
-                    raw_entries = entries_list
-            else:
-                # —— 旧格式：扁平 key-value ——
-                for user_term, standard_term in data.items():
-                    if user_term and standard_term:
-                        raw_entries.append({
-                            "aliases": [str(user_term).strip()],
-                            "target": str(standard_term).strip(),
-                        })
+        if isinstance(data, dict) and "entries" in data:
+            entries_list = data["entries"]
+            if isinstance(entries_list, list):
+                raw_entries = entries_list
 
         # 解析为 AliasEntry 列表
         parsed: list[AliasEntry] = []

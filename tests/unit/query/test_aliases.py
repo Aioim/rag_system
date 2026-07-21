@@ -10,24 +10,13 @@ from query.aliases import AliasEntry, AliasManager
 
 
 # ============================================================================
-# YAML 格式兼容性
+# YAML 格式
 # ============================================================================
 
 
 class TestYamlFormat:
-    def test_old_flat_format(self, tmp_path):
-        """旧格式（扁平 key-value）应正确解析为单 alias 条目"""
-        alias_file = tmp_path / "aliases.yaml"
-        alias_file.write_text('"工资条": "薪资明细"\n"公积金": "住房公积金"\n', encoding="utf-8")
-
-        mgr = AliasManager()
-        assert mgr.load(alias_file)
-        assert mgr.resolve("工资条") == "薪资明细"
-        assert mgr.resolve("公积金") == "住房公积金"
-        assert mgr.count == 2
-
-    def test_new_entries_format(self, tmp_path):
-        """新格式（entries 列表）应正确解析多别名条目"""
+    def test_entries_format(self, tmp_path):
+        """entries 列表格式应正确解析多别名条目"""
         alias_file = tmp_path / "aliases.yaml"
         alias_file.write_text(
             "entries:\n"
@@ -43,25 +32,6 @@ class TestYamlFormat:
         assert mgr.resolve("工资条") == "薪资明细"
         assert mgr.resolve("工资单") == "薪资明细"
         assert mgr.resolve("公积金") == "住房公积金"
-
-    def test_mixed_format_loads_both(self, tmp_path):
-        """先后加载新旧两种格式应正确合并"""
-        old_file = tmp_path / "old.yaml"
-        new_file = tmp_path / "new.yaml"
-        old_file.write_text('"个税": "个人所得税"\n', encoding="utf-8")
-        new_file.write_text(
-            "entries:\n"
-            '  - aliases: ["工资条", "工资单"]\n'
-            '    target: "薪资明细"\n',
-            encoding="utf-8",
-        )
-
-        mgr = AliasManager()
-        assert mgr.load(old_file)
-        assert mgr.load(new_file)
-        assert mgr.resolve("个税") == "个人所得税"
-        assert mgr.resolve("工资条") == "薪资明细"
-        assert mgr.resolve("工资单") == "薪资明细"
 
 
 # ============================================================================
