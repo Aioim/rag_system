@@ -109,7 +109,7 @@ def fetch_and_decrypt_env_var(env_var: str) -> str:
         raise RuntimeError(f"Error decrypting '{env_var}': {e!s}") from e
 
 
-def process_env_file(input_path: str, output_path: str | None = None):
+def process_env_file(input_path: str, output_path: str | None = None) -> None:
     """
     加密 .env 文件中的敏感字段
 
@@ -132,6 +132,7 @@ def process_env_file(input_path: str, output_path: str | None = None):
     # 识别敏感字段（基于命名约定）
     sensitive_keys = SecureEnvLoader.SECRET_KEY_PATTERNS
     encrypted_count = 0
+    failed_count = 0
 
     with open(input_file, encoding='utf-8') as f_in:
         lines = f_in.readlines()
@@ -174,12 +175,18 @@ def process_env_file(input_path: str, output_path: str | None = None):
                     encrypted_count += 1
                     print(f"  🔒 Encrypted: {key.strip()}")
                 except Exception as e:
-                    print(f"  ⚠️  Failed to encrypt {key.strip()}: {e}", file=sys.stderr)
-                    f_out.write(line)
+                    print(f"  ❌ Failed to encrypt {key.strip()}: {e}", file=sys.stderr)
+                    # 安全优先：加密失败时跳过该行，不将明文写入输出文件
+                    failed_count += 1
             else:
                 f_out.write(line)
 
+    if failed_count > 0:
+        print(f"\n⚠️  WARNING: {failed_count} field(s) could NOT be encrypted and were OMITTED from output.")
+        print("   The output file is INCOMPLETE — resolve the errors above before deploying.")
     print(f"\n✅ Encrypted {encrypted_count} fields")
+    if failed_count > 0:
+        print(f"⚠️  Skipped (omitted): {failed_count} fields")
     print(f"   Input:  {input_file.resolve()}")
     print(f"   Output: {output_file.resolve()}")
     print("\n⚠️  CRITICAL NEXT STEPS:")
@@ -189,7 +196,7 @@ def process_env_file(input_path: str, output_path: str | None = None):
     print(f"   4. Deploy {output_file.name} as .env to production")
 
 
-def interactive_encrypt():
+def interactive_encrypt() -> None:
     """交互式加密单个值"""
     print("=" * 60)
     print("🔐 .env Sensitive Value Encryptor")
@@ -235,7 +242,7 @@ def interactive_encrypt():
     print("   • Rotate keys quarterly using security.rotate_keys()")
 
 
-def main():
+def main() -> None:
     """命令行入口"""
     parser = argparse.ArgumentParser(
         description="🔐 Secure .env encryption tool",

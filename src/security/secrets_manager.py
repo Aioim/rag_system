@@ -99,6 +99,7 @@ class SecretsManager:
         self._fernet: Fernet | None = None
         self._encrypted_cache: dict[str, bytes] = {}
         self._cache_lock = threading.Lock()
+        self._auto_generated_key: bool = False
 
         try:
             self._load_key_file()
@@ -175,15 +176,21 @@ class SecretsManager:
                 raw = f.read()
             diagnosis = _analyze_key_integrity(raw)
             logger.warning("Key file diagnosis:\n%s", diagnosis)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Key file diagnosis skipped (file may be unreadable): %s", e)
 
         if not SecurityConfig.IS_PRODUCTION or SecurityConfig.IS_CI:
             # 重命名损坏文件备份（而非直接删除），保留从旧加密值恢复的可能
-            _bak = SecurityConfig.KEY_FILE.with_suffix(".secret_key.corrupted")
+            # 注意：.secret_key 是点文件，suffix 为空，with_suffix 会拼接而非替换
+            _bak = SecurityConfig.KEY_FILE.with_name(
+                SecurityConfig.KEY_FILE.name + ".corrupted"
+            )
             try:
                 SecurityConfig.KEY_FILE.replace(_bak)
-            except OSError:
+            except OSError as e:
+                logger.warning(
+                    "Failed to rename corrupted key file (will unlink instead): %s", e
+                )
                 SecurityConfig.KEY_FILE.unlink(missing_ok=True)
             self._generate_dev_key()
 
@@ -212,6 +219,7 @@ class SecretsManager:
             if os.name != 'nt':
                 SecurityConfig.KEY_FILE.chmod(0o600)
 
+        self._auto_generated_key = True
         self._load_key_file()
 
     def _panic_and_exit(self, message: str) -> None:
@@ -292,11 +300,7 @@ class SecretsManager:
             "key_file_exists": SecurityConfig.KEY_FILE.exists(),
             "key_valid": self._fernet is not None,
             "secrets_cached": len(self._encrypted_cache),
-            "auto_generated": (
-                not SecurityConfig.KEY_FILE.exists()
-                and self.is_encrypted()
-                and not SecurityConfig.IS_PRODUCTION
-            )
+            "auto_generated": self._auto_generated_key
         }
 
     def encrypt_string(self, value: str) -> str:
@@ -307,7 +311,11 @@ class SecretsManager:
         return f"ENC[{encrypted_bytes.decode('utf-8')}]"
 
     def decrypt_string(self, encrypted: str) -> str:
-        """解密 ENC[...] 格式字符串，返回明文"""
+        """解密 Fernet 令牌（raw base64，不含 ENC[...] 包装），返回明文
+
+        注意：此方法期望原始 base64 令牌，而非 ENC[...] 格式。
+        如需解密 ENC[...] 值，请使用 env_encryptor.decrypt_value()。
+        """
         if not self._fernet:
             raise RuntimeError("Fernet not initialized")
         encrypted_bytes = encrypted.encode("utf-8")
@@ -324,33 +332,60 @@ except Exception as e:
         logger.warning("Falling back to INSECURE DEVELOPMENT MODE: %s", e)
 
         class InsecureDevelopmentFallback:
-            """仅限开发环境的不安全降级（不缓存明文）"""
+            """仅限开发环境的不安全降级（明文以 os.environ 存储，子进程可见）"""
 
             def set_secret(self, name: str, value: str) -> None:
+                if not isinstance(value, str):
+                    raise TypeError(
+                        f"Secret value must be str, got {type(value).__name__}"
+                    )
                 os.environ[name] = value
                 logger.debug("[INSECURE] Secret stored as env var: %s", name)
 
-            def get_secret(self, name: str, default=None, required=False) -> SecretStr | None:
-                val = os.getenv(name, default)
-                if required and val is None:
-                    raise KeyError(f"Missing required env: {name}")
-                return SecretStr(val, name=name) if val else None
+            def get_secret(self, name: str, default: str | None = None, required: bool = False) -> SecretStr | None:
+                val = os.getenv(name)
+                if val is None:
+                    if required:
+                        raise KeyError(f"Missing required env: {name}")
+                    if default is not None:
+                        return SecretStr(default, name=f"{name}_default")
+                    return None
+                return SecretStr(val, name=name)
 
             @staticmethod
-            def is_encrypted():
+            def is_encrypted() -> bool:
                 return False
 
             @staticmethod
-            def delete_secret(name: str):
-                return False
+            def delete_secret(name: str) -> bool:
+                os.environ.pop(name, None)
+                logger.debug("[INSECURE] Secret removed from env var: %s", name)
+                return True
 
             @staticmethod
-            def list_secrets():
+            def list_secrets() -> list[str]:
                 return []
 
             @staticmethod
-            def get_status():
-                return {"encrypted": False, "insecure_fallback": True, "environment": "development"}
+            def get_status() -> dict:
+                return {
+                    "encrypted": False,
+                    "insecure_fallback": True,
+                    "environment": "development",
+                    "key_file": str(SecurityConfig.KEY_FILE),
+                    "key_file_exists": SecurityConfig.KEY_FILE.exists(),
+                    "key_valid": False,
+                    "secrets_cached": 0,
+                    "auto_generated": False,
+                }
+
+            @staticmethod
+            def encrypt_string(value: str) -> str:
+                raise RuntimeError("Fernet not initialized (insecure fallback active)")
+
+            @staticmethod
+            def decrypt_string(encrypted: str) -> str:
+                raise RuntimeError("Fernet not initialized (insecure fallback active)")
 
         secrets = InsecureDevelopmentFallback()
     else:

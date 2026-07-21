@@ -13,9 +13,11 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 from cryptography.fernet import InvalidToken
 
+from config.path import PROJECT_ROOT
 from logger import logger, security_logger
 from security.secrets_manager import secrets as _global_secrets
 
@@ -38,10 +40,7 @@ class SecureEnvLoader:
     })
 
     def __init__(self, env_file: Path | None = None):
-        if env_file is None:
-            from config.path import PROJECT_ROOT
-            env_file = PROJECT_ROOT / ".env"
-        self.env_file = env_file
+        self.env_file = env_file or PROJECT_ROOT / ".env"
         self.secrets_manager = _global_secrets  # 复用模块级单例，避免重复加载密钥
         self._loaded_values: dict[str, str] = {}
         self._decryption_errors: dict[str, str] = {}
@@ -157,31 +156,14 @@ class SecureEnvLoader:
             return value
         return cls._INLINE_COMMENT.sub('', value).rstrip()
 
-    def _unescape_value(self, value: str) -> str:
+    # 转义序列映射：\\ → \, \n → 换行, \t → 制表符，单遍 re.sub 处理
+    _ESCAPE_RE: ClassVar[re.Pattern] = re.compile(r'\\([\\nt])')
+    _ESCAPE_MAP: ClassVar[dict[str, str]] = {'\\': '\\', 'n': '\n', 't': '\t'}
+
+    @classmethod
+    def _unescape_value(cls, value: str) -> str:
         value = value.strip().strip('"').strip("'")
-        # 单遍处理转义序列：先处理 \\ → \，再处理 \n → 换行、\t → 制表符
-        # 避免 \\n 被误转为 \ + 换行符
-        result: list[str] = []
-        i = 0
-        while i < len(value):
-            if value[i] == '\\' and i + 1 < len(value):
-                nxt = value[i + 1]
-                if nxt == '\\':
-                    result.append('\\')
-                    i += 2
-                elif nxt == 'n':
-                    result.append('\n')
-                    i += 2
-                elif nxt == 't':
-                    result.append('\t')
-                    i += 2
-                else:
-                    result.append(value[i])
-                    i += 1
-            else:
-                result.append(value[i])
-                i += 1
-        return ''.join(result)
+        return cls._ESCAPE_RE.sub(lambda m: cls._ESCAPE_MAP[m.group(1)], value)
 
     def _decrypt_env_value(self, encrypted_b64: str) -> str:
         if not hasattr(self.secrets_manager, "decrypt_string"):
@@ -218,7 +200,7 @@ class SecureEnvLoader:
         # 默认截断
         return value if len(value) < 20 else f"{value[:15]}..."
 
-    def _log_load_summary(self, plain_fields: dict, encrypted_fields: dict):
+    def _log_load_summary(self, plain_fields: dict, encrypted_fields: dict) -> None:
         total = len(plain_fields) + len(encrypted_fields)
         failed = len(self._decryption_errors)
         success_enc = len(encrypted_fields) - failed
@@ -241,7 +223,7 @@ class SecureEnvLoader:
     def _is_production(self) -> bool:
         return os.getenv("ENV", "dev").lower() in ("prod", "production", "staging")
 
-    def _fatal_error(self, message: str):
+    def _fatal_error(self, message: str) -> None:
         logger.critical("=" * 70)
         logger.critical("SECURITY FAILURE: Env decryption failed in production")
         logger.critical("=" * 70)
@@ -259,8 +241,10 @@ class SecureEnvLoader:
 # ========== 全局便捷函数 ==========
 
 def load_secure_dotenv(dotenv_path: str | None = None, override: bool = False) -> bool:
-    env_path = Path(dotenv_path) if dotenv_path else Path('.env')
-    loader = SecureEnvLoader(env_path)
+    if dotenv_path:
+        loader = SecureEnvLoader(Path(dotenv_path))
+    else:
+        loader = SecureEnvLoader()  # 委托默认路径给 SecureEnvLoader（PROJECT_ROOT/.env）
     loader.load(override=override)
     return True
 

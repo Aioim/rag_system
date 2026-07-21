@@ -194,7 +194,7 @@ class LLMTrainer(BaseTrainer):
         try:
             from security import secrets as _sec
             secret_obj = _sec.get_secret("DEEPSEEK_API_KEY", required=False)
-            api_key = secret_obj.get_secret_value() if secret_obj else os.getenv("DEEPSEEK_API_KEY")
+            api_key = secret_obj.get() if secret_obj else os.getenv("DEEPSEEK_API_KEY")
         except Exception:
             api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
