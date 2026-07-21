@@ -21,8 +21,9 @@ def get_fallback_handler() -> FallbackHandler:
     """
     global _fallback_handler
 
-    if _fallback_handler is not None:
-        return _fallback_handler
+    handler = _fallback_handler
+    if handler is not None:
+        return handler
 
     with _lock:
         if _fallback_handler is None:

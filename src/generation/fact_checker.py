@@ -50,7 +50,8 @@ class FactChecker:
             return [], 1.0, True
 
         if not results:
-            return [], 1.0, False
+            # LLM 返回了有效 JSON 但无任何断言 → 核查未实际执行，标记降级
+            return [], 1.0, True
         supported = sum(1 for r in results if r.status == "supported")
         return results, supported / len(results), False
 
@@ -95,6 +96,10 @@ class FactChecker:
             raise ValueError("FactChecker: LLM 响应中未找到 JSON 数组")
 
         data = json.loads(json_str)
+        if not isinstance(data, list):
+            raise ValueError(
+                f"FactChecker: 需要 JSON 数组，但收到 {type(data).__name__}"
+            )
         results = []
         for item in data:
             if not isinstance(item, dict):

@@ -33,8 +33,9 @@ def get_react_agent(
     """
     global _react_agent
 
-    if _react_agent is not None:
-        return _react_agent
+    agent = _react_agent
+    if agent is not None:
+        return agent
 
     with _lock:
         if _react_agent is None:

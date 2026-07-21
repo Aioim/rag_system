@@ -70,7 +70,9 @@ class WebSearcher:
                 asyncio.to_thread(self._sync_search, query),
                 timeout=timeout,
             )
-        except TimeoutError:
+        except (TimeoutError, asyncio.TimeoutError):
+            # Python 3.10 及之前 asyncio.TimeoutError 不继承自内置 TimeoutError,
+            # 需同时捕获两者以保证兼容性
             logger.warning("联网搜索超时 query=%.100s, timeout=%ds", query, timeout)
             return []
         except asyncio.CancelledError:

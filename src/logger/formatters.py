@@ -60,11 +60,17 @@ class SecurityFormatter(logging.Formatter):
 
             if isinstance(record.msg, str):
                 record.msg = self._sanitize(record.msg)
-            if record.args and isinstance(record.args, dict):
-                record.args = {
-                    self._sanitize(k): self._sanitize(v) if isinstance(v, str) else v
-                    for k, v in record.args.items()
-                }
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {
+                        self._sanitize(k): self._sanitize(v) if isinstance(v, str) else v
+                        for k, v in record.args.items()
+                    }
+                elif isinstance(record.args, (list, tuple)):
+                    record.args = tuple(
+                        self._sanitize(v) if isinstance(v, str) else v
+                        for v in record.args
+                    )
 
             # 对格式化后的完整字符串脱敏：覆盖 msg 与 args 拼接后才出现的
             # 敏感形态（如 "token=%s" % tok），且不依赖改写格式串本身

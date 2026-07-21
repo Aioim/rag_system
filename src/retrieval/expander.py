@@ -18,24 +18,27 @@ class ContextExpander:
             return chunk  # 已以相同窗口大小扩展过，幂等返回
 
         before: list[Chunk] = []
+        seen = {chunk.chunk_id}
         cur = chunk
         for _ in range(window):
-            if not cur.prev_chunk_id:
+            if not cur.prev_chunk_id or cur.prev_chunk_id in seen:
                 break
             prev = self._store.get_chunk(cur.prev_chunk_id)
             if prev is None:
                 break
+            seen.add(cur.prev_chunk_id)
             before.insert(0, prev)
             cur = prev
 
         after: list[Chunk] = []
         cur = chunk
         for _ in range(window):
-            if not cur.next_chunk_id:
+            if not cur.next_chunk_id or cur.next_chunk_id in seen:
                 break
             nxt = self._store.get_chunk(cur.next_chunk_id)
             if nxt is None:
                 break
+            seen.add(cur.next_chunk_id)
             after.append(nxt)
             cur = nxt
 

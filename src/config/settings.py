@@ -165,7 +165,7 @@ class LLMConfig(_BaseConfig):
             raise ValueError(
                 "api_key 不允许在 YAML 中配置！"
                 "请通过环境变量 LLM_API_KEY 设置，或写入 .env 文件"
-                "（支持 ENC[...] Fernet 加密格式，使用 python -m security.env_encrypt 生成）"
+                "（支持 ENC[...] Fernet 加密格式，使用 python -m security.env_encryptor 生成）"
             )
         return v
 
@@ -460,14 +460,50 @@ class ConfigManager:
                     cls._instance._initialized = False
         return cls._instance
 
+    @staticmethod
+    def _decrypt_enc_env_vars() -> None:
+        """解密 os.environ 中的 ENC[...] 加密字段（轻量路径，不触发项目级导入链）
+
+        必须在从环境变量构建配置之前调用。仅依赖 cryptography.Fernet
+        和 PROJECT_ROOT/.secret_key 文件，不导入 logger / config / security，
+        避免与 ConfigManager 自身的初始化形成循环依赖。
+        """
+        import os as _os
+        import re as _re
+
+        _ENC_PATTERN = _re.compile(r'^ENC\[(?P<value>[A-Za-z0-9_\-+=/]+)\]$')
+        _secret_key_path = PROJECT_ROOT / ".secret_key"
+        if not _secret_key_path.exists():
+            return
+        try:
+            _key = _secret_key_path.read_bytes()
+            from cryptography.fernet import Fernet as _Fernet
+            _fernet = _Fernet(_key)
+        except Exception:
+            return
+        for _k, _v in list(_os.environ.items()):
+            _match = _ENC_PATTERN.match(_v)
+            if not _match:
+                continue
+            try:
+                _os.environ[_k] = _fernet.decrypt(
+                    _match.group("value").encode()
+                ).decode()
+            except Exception:
+                pass  # 保留密文，下游校验会捕获
+
     def _load_full_config(self) -> RAGAppConfig:
         """加载并合并所有配置源"""
         # 0. 加载 .env 文件到 os.environ（仅明文值，不触发项目级导入链）
         #    必须在读取任何环境变量之前执行，否则 .env 中的配置不生效
-        #    使用 PROJECT_ROOT 锚定 .env 路径，避免依赖 CWD
-        #    ENC[...] 加密字段在 initialize() 中由 SecureEnvLoader 解密覆盖
         from dotenv import load_dotenv
         load_dotenv(str(PROJECT_ROOT / ".env"))
+
+        # 0.5 解密 ENC[...] 加密字段（必须在 build config 之前，否则加密值
+        #     会作为明文进入配置）。使用独立的轻量解密路径以避免循环导入：
+        #     - 只依赖 cryptography.Fernet + .secret_key 文件
+        #     - 不导入 logger / config / security 等模块
+        self._decrypt_enc_env_vars()
 
         # 1. 加载 YAML 基础配置（按环境）
         env_name = self._overrides.get("env") or os.getenv("ENV", "dev")
@@ -492,12 +528,9 @@ class ConfigManager:
                 if not self._initialized:
                     try:
                         self._config = self._load_full_config()
-                        # .env 已由 _load_full_config 加载明文值；此处用 SecureEnvLoader
-                        # 以 override=True 重新加载，解密 ENC[...] 加密字段并覆盖对应环境变量
-                        # 必须在 _load_full_config 之后调用：此时 self._config 已就绪，
-                        # logger 初始化所需的 settings.log 可正常访问，不再触发循环导入
-                        from security.secure_env_loader import load_secure_dotenv
-                        load_secure_dotenv(str(PROJECT_ROOT / ".env"), override=True)
+                        # ENC[...] 解密已在 _load_full_config 内部完成（通过
+                        # _decrypt_enc_env_vars），config 构建时环境变量已是明文。
+                        # 此处仅初始化磁盘目录，无需再次调用 load_secure_dotenv。
                         self._config.ingestion.initialize()
                         self._config.log.initialize()
                         self._config.session.initialize()

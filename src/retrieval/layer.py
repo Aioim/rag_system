@@ -24,6 +24,9 @@ from retrieval.reranker import Reranker, load_cross_encoder, mmr_select
 from retrieval.store import FAISSStore, get_store
 from retrieval.vector_retriever import VectorRetriever, load_embedding_model
 
+# 不应被吞没的关键异常（模块级常量，避免每次 retrieve 重新分配）
+_CRITICAL_EXC = (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)
+
 
 class RetrievalLayer:
     """encoder/cross_encoder 为 None 时首次 retrieve 懒加载真实模型（测试注入 mock）"""
@@ -118,7 +121,6 @@ class RetrievalLayer:
         bm25_failed = isinstance(bm25_raw, BaseException)
 
         # 重新抛出不应被吞没的关键异常
-        _CRITICAL_EXC = (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)
         if isinstance(encoder_raw, _CRITICAL_EXC):
             raise encoder_raw
         if isinstance(cross_encoder_raw, _CRITICAL_EXC):
@@ -157,7 +159,7 @@ class RetrievalLayer:
         ranked_lists = []
         for r in results:
             if isinstance(r, BaseException):
-                if isinstance(r, (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)):
+                if isinstance(r, _CRITICAL_EXC):
                     raise r
                 # _safe_retrieve 已捕获 Exception，此处兜底其余 BaseException，避免丢弃已成功的召回路
                 logger.error("召回任务异常: %s", r)

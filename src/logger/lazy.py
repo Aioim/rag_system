@@ -60,7 +60,7 @@ class LazyLogger:
                     # 主日志器：文件输出 + 错误日志
                     if name == "rag":
                         logger.addHandler(HandlerFactory.create_handler(
-                            "timed", log_config.log_file, logging.DEBUG
+                            "timed", str(log_config.log_dir / log_config.log_file), logging.DEBUG
                         ))
                         # 错误日志（含堆栈）
                         logger.addHandler(HandlerFactory.create_handler(

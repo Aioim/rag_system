@@ -54,7 +54,13 @@ class Reranker:
         results = self._ce.rank(query, [c.text for c in chunks])
         ranked: list[Chunk] = []
         for r in results:
-            c = chunks[r["corpus_id"]]
+            cid = r["corpus_id"]
+            if cid < 0 or cid >= len(chunks):
+                logger.warning(
+                    "CrossEncoder 返回越界 corpus_id=%d（共 %d 个 chunks），已跳过", cid, len(chunks)
+                )
+                continue
+            c = chunks[cid]
             c.rerank_score = float(r["score"])
             ranked.append(c)
         return ranked

@@ -268,7 +268,7 @@ class ReActAgent:
         t_iter = time.perf_counter()
 
         # 1. LLM 决策 + 解析
-        prompt = self._build_prompt(query, traces, observation)
+        prompt = self._build_prompt(query, traces)
         raw = await self._call_llm(prompt)
         parsed = parse_react_output(raw)
 
@@ -393,9 +393,9 @@ class ReActAgent:
     # ---- 内部方法 ----------------------------------------------------------
 
     def _build_prompt(
-        self, query: str, traces: list[ReActTrace], observation: str | None
+        self, query: str, traces: list[ReActTrace]
     ) -> str:
-        """构建本轮 LLM 调用的完整 prompt"""
+        """构建本轮 LLM 调用的完整 prompt（历史 observation 已包含在 traces 中）"""
         parts = [_SYSTEM_PROMPT, "", f"用户问题: {query}"]
 
         # 注入历史痕迹（含每轮的 observation）

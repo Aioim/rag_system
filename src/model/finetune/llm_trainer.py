@@ -185,7 +185,7 @@ class LLMTrainer(BaseTrainer):
             )
             return response.content
         except (ImportError, AttributeError):
-            pass  # LLM 路由模块未就绪，降级到 DeepSeek API 直调
+            logger.debug("LLM 路由模块未就绪，降级到 DeepSeek API 直调")
         except Exception as e:
             logger.warning("LLM 路由调用失败: %s，降级到 DeepSeek API 直调", e)
 
@@ -194,7 +194,7 @@ class LLMTrainer(BaseTrainer):
         try:
             from security import secrets as _sec
             secret_obj = _sec.get_secret("DEEPSEEK_API_KEY", required=False)
-            api_key = str(secret_obj) if secret_obj else os.getenv("DEEPSEEK_API_KEY")
+            api_key = secret_obj.get_secret_value() if secret_obj else os.getenv("DEEPSEEK_API_KEY")
         except Exception:
             api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:

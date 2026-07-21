@@ -29,13 +29,14 @@ def get_rag_pipeline(llm: LLMProtocol, session_manager: SessionManager) -> RAGPi
     """
     global _rag_pipeline, _init_llm_id, _init_sm_id
 
-    # 快速路径：已初始化，无锁检查
-    if _rag_pipeline is not None:
+    # 快速路径：局部引用快照防止并发 reset 期间的竞态
+    pipeline = _rag_pipeline
+    if pipeline is not None:
         if id(llm) != _init_llm_id or id(session_manager) != _init_sm_id:
             logger.warning(
                 "get_rag_pipeline 已初始化，忽略不同的 llm/session_manager 参数"
             )
-        return _rag_pipeline
+        return pipeline
 
     with _lock:
         # 双重检查：可能另一个线程刚完成初始化

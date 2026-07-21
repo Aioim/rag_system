@@ -23,13 +23,14 @@ def get_generation_layer(llm: LLMProtocol) -> GenerationLayer:
     """
     global _generation_layer, _init_llm_id
 
-    # 快速路径：已初始化，无锁检查
-    if _generation_layer is not None:
+    # 快速路径：局部引用快照防止并发 reset 期间的竞态
+    layer = _generation_layer
+    if layer is not None:
         if id(llm) != _init_llm_id:
             logger.warning(
                 "get_generation_layer 已初始化，忽略不同的 llm 参数"
             )
-        return _generation_layer
+        return layer
 
     with _lock:
         # 双重检查：可能另一个线程刚完成初始化

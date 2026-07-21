@@ -23,7 +23,6 @@ YAML 格式（新旧兼容）：
 
 from __future__ import annotations
 
-import logging
 import re
 import threading
 import time
@@ -34,7 +33,7 @@ import yaml
 
 from config.path import PROJECT_ROOT
 
-logger = logging.getLogger(__name__)
+from logger import logger
 
 
 # ============================================================================

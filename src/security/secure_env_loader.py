@@ -38,7 +38,10 @@ class SecureEnvLoader:
     })
 
     def __init__(self, env_file: Path | None = None):
-        self.env_file = env_file or Path('.env')
+        if env_file is None:
+            from config.path import PROJECT_ROOT
+            env_file = PROJECT_ROOT / ".env"
+        self.env_file = env_file
         self.secrets_manager = _global_secrets  # 复用模块级单例，避免重复加载密钥
         self._loaded_values: dict[str, str] = {}
         self._decryption_errors: dict[str, str] = {}
@@ -156,9 +159,29 @@ class SecureEnvLoader:
 
     def _unescape_value(self, value: str) -> str:
         value = value.strip().strip('"').strip("'")
-        # 注意：必须先处理 \n \t 再处理 \\，否则 \\n → \ + n → 被后续误转为换行
-        value = value.replace('\\n', '\n').replace('\\t', '\t')
-        return value.replace('\\\\', '\\')
+        # 单遍处理转义序列：先处理 \\ → \，再处理 \n → 换行、\t → 制表符
+        # 避免 \\n 被误转为 \ + 换行符
+        result: list[str] = []
+        i = 0
+        while i < len(value):
+            if value[i] == '\\' and i + 1 < len(value):
+                nxt = value[i + 1]
+                if nxt == '\\':
+                    result.append('\\')
+                    i += 2
+                elif nxt == 'n':
+                    result.append('\n')
+                    i += 2
+                elif nxt == 't':
+                    result.append('\t')
+                    i += 2
+                else:
+                    result.append(value[i])
+                    i += 1
+            else:
+                result.append(value[i])
+                i += 1
+        return ''.join(result)
 
     def _decrypt_env_value(self, encrypted_b64: str) -> str:
         if not hasattr(self.secrets_manager, "decrypt_string"):

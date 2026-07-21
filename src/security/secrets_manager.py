@@ -179,7 +179,12 @@ class SecretsManager:
             pass
 
         if not SecurityConfig.IS_PRODUCTION or SecurityConfig.IS_CI:
-            SecurityConfig.KEY_FILE.unlink(missing_ok=True)
+            # 重命名损坏文件备份（而非直接删除），保留从旧加密值恢复的可能
+            _bak = SecurityConfig.KEY_FILE.with_suffix(".secret_key.corrupted")
+            try:
+                SecurityConfig.KEY_FILE.replace(_bak)
+            except OSError:
+                SecurityConfig.KEY_FILE.unlink(missing_ok=True)
             self._generate_dev_key()
 
     def _handle_initialization_error(self, exc: Exception) -> None:
@@ -322,7 +327,8 @@ except Exception as e:
             """仅限开发环境的不安全降级（不缓存明文）"""
 
             def set_secret(self, name: str, value: str) -> None:
-                logger.debug("[INSECURE] Secret ignored in fallback mode: %s", name)
+                os.environ[name] = value
+                logger.debug("[INSECURE] Secret stored as env var: %s", name)
 
             def get_secret(self, name: str, default=None, required=False) -> SecretStr | None:
                 val = os.getenv(name, default)

@@ -9,6 +9,10 @@ def rrf_fuse(
     位置即 rank（从 1 计）。融合层按"多路排名列表"设计，
     后续新增召回路（如摘要索引）直接追加列表即可。
     """
+    if rrf_k <= 0:
+        raise ValueError(f"rrf_k 必须 > 0，收到: {rrf_k}")
+    if limit <= 0:
+        return []
     scores: dict[str, float] = {}
     for ranked in ranked_lists:
         for rank, chunk_id in enumerate(ranked, start=1):

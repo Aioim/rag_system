@@ -13,9 +13,10 @@ def get_retrieval_layer() -> RetrievalLayer:
     """获取检索层全局单例（模型懒加载，首次 retrieve 时初始化）"""
     global _retrieval_layer
 
-    # 快速路径：已初始化，无锁检查
-    if _retrieval_layer is not None:
-        return _retrieval_layer
+    # 快速路径：局部引用快照防止 reset 期间的竞态（GIL 保证引用读写原子性）
+    layer = _retrieval_layer
+    if layer is not None:
+        return layer
 
     with _lock:
         # 双重检查：可能另一个线程刚完成初始化

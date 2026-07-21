@@ -66,8 +66,15 @@ class YamlLoader:
             return {}, 0.0
 
         mtime = file_path.stat().st_mtime
-        with open(file_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f) or {}
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+        except yaml.YAMLError as e:
+            raise ValueError(
+                f"YAML 配置文件格式错误: {file_path}\n"
+                f"  错误: {e}\n"
+                f"  提示: 请检查 YAML 语法（缩进、冒号、引号匹配等）"
+            ) from e
         return config, mtime
 
     def clear_cache(self) -> None:

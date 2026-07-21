@@ -128,7 +128,7 @@ class FAISSIndexWriter:
             return
 
         # 防路径遍历：与 retrieval/store.py 保持一致
-        if not collection or "/" in collection or "\\" in collection or ".." in collection:
+        if not collection or "\0" in collection or "/" in collection or "\\" in collection or ".." in collection:
             raise ValueError(f"非法 collection 名称: {collection!r}")
 
         # 并发保护：按 collection 串行化写操作

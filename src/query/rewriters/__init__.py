@@ -34,9 +34,9 @@ class QueryRewriter:
         for r in results:
             if isinstance(r, (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)):
                 raise r
-            # asyncio.gather(return_exceptions=True) 对 Exception 子类返回异常对象，
-            # 对 BaseException 的非 Exception 子类（如 CancelledError）直接传播，
-            # 因此此处 isinstance(r, BaseException) 实际仅匹配 Exception。
+            # asyncio.gather(return_exceptions=True) 捕获所有异常（含 Exception 子类）
+            # 作为返回值；上述 BaseException 已在之前 re-raise，此处 r 要么正常
+            # 要么为 Exception 实例
             if isinstance(r, Exception):
                 logger.error("QueryRewriter 子改写器异常: %s", r)
                 continue

@@ -31,7 +31,9 @@ class _BaseSplitter(ABC):
         ...
 
     def _estimate_tokens(self, text: str) -> int:
-        """字符数估算 token 数（1 中文字符 ≈ 1 token 的简化近似，实际返回 len(text)）"""
+        """返回字符数作为 token 数粗略近似（1 中文字符 ≈ 1 token，4 英文字符 ≈ 1 token）。
+        注意：本方法实际返回 len(text)，命名保留以兼容调用方；精确 token 计数需接入对应 tokenizer。
+        """
         return len(text)
 
     def _build_chunks(self, texts: list[str]) -> list[Chunk]:
@@ -106,7 +108,7 @@ class HierarchicalChunker(_BaseSplitter):
         if not text.strip():
             return []
 
-        sections = re.split(r"(?=^#{1,3}\s)", text, flags=re.MULTILINE)
+        sections = re.split(r"(?=^#{1,3}(?:[ \t]|$))", text, flags=re.MULTILINE)
 
         heading_stack: list[str] = []
         text_segments = []
@@ -200,19 +202,16 @@ class SemanticChunker(_BaseSplitter):
         # 2. 批量计算句子 embedding
         embeddings = self.embedding_model.encode(sentences)
 
-        # 3. 计算相邻句子余弦相似度
-        similarities = []
-        for i in range(len(embeddings) - 1):
-            sim = np.dot(embeddings[i], embeddings[i + 1]) / (
-                np.linalg.norm(embeddings[i]) * np.linalg.norm(embeddings[i + 1]) + 1e-8
-            )
-            similarities.append(float(sim))
+        # 3. 向量化计算相邻句子余弦相似度（批量归一化，性能远优于逐对循环）
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        normalized = embeddings / (norms + 1e-8)
+        similarities = (normalized[:-1] * normalized[1:]).sum(axis=1).tolist()
 
         # 4. 取 percentile 作为阈值
         threshold = np.percentile(similarities, self.threshold_percentile * 100)
 
-        # 5. 标记切分点（应用 buffer 抑制邻近重复切分）
-        raw_cuts = sorted(i + 1 for i, sim in enumerate(similarities) if sim < threshold)
+        # 5. 标记切分点（应用 buffer 抑制邻近重复切分；enumerate 已保证索引递增，无需 sorted）
+        raw_cuts = [i + 1 for i, sim in enumerate(similarities) if sim < threshold]
         cut_points = set()
         last_cut = -self.buffer_size - 1
         for cut in raw_cuts:
@@ -241,7 +240,8 @@ class SemanticChunker(_BaseSplitter):
         chunks = self._build_chunks(text_segments)
         if self.overlap > 0 and len(chunks) > 1:
             for i in range(1, len(chunks)):
-                prev_end = chunks[i - 1].text[-self.overlap:]
+                safe_overlap = min(self.overlap, len(chunks[i - 1].text))
+                prev_end = chunks[i - 1].text[-safe_overlap:]
                 if prev_end:
                     chunks[i] = replace(chunks[i], text=prev_end + chunks[i].text)
 

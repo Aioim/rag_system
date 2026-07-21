@@ -80,6 +80,9 @@ class RAGPipeline:
         # ---- 1. 查询理解 ------------------------------------------------
         try:
             ctx = await self.query_layer.process(query, session_id, collection)
+            # process() 可能返回新 PipelineContext 对象（original_query 默认 ""），
+            # 需确保成功路径上也保持原始 query
+            ctx.original_query = ctx.original_query or query
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -150,7 +153,7 @@ class RAGPipeline:
 
             if ctx.fallback_level in (FallbackLevel.NO_ANSWER, FallbackLevel.WEB_SEARCH):
                 self._record_elapsed(ctx, t0)
-                await self._save_to_session(session_id, query, ctx.answer)
+                await self._save_to_session(session_id, ctx.original_query, ctx.answer)
                 return ctx, True
 
         return ctx, False

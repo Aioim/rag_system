@@ -20,8 +20,8 @@ class FAISSStore:
     """
 
     def __init__(self, collection: str):
-        # 防路径遍历：collection 将拼接到索引目录路径，拒绝分隔符 / .. / 空值
-        if not collection or "/" in collection or "\\" in collection or ".." in collection:
+        # 防路径遍历：collection 将拼接到索引目录路径，拒绝分隔符 / .. / 空值 / 空字节
+        if not collection or "\0" in collection or "/" in collection or "\\" in collection or ".." in collection:
             raise ValueError(f"非法 collection 名称: {collection!r}")
         self.collection = collection
         self.version = 0
@@ -55,7 +55,7 @@ class FAISSStore:
                 raise RuntimeError(
                     f"Collection '{self.collection}' FAISS 索引加载失败: {e}"
                 ) from e
-            if isinstance(index, faiss.IndexIVFFlat):
+            if isinstance(index, faiss.IndexIVF):
                 index.nprobe = settings.faiss.nprobe
                 try:
                     index.make_direct_map()   # MMR 需 reconstruct 原始向量
@@ -78,7 +78,7 @@ class FAISSStore:
                 ) from e
 
         id_map = {
-            entry["faiss_id"]: cid
+            int(entry["faiss_id"]): cid
             for cid, entry in docstore.items()
             if "faiss_id" in entry
         }
@@ -177,7 +177,9 @@ def get_store(collection: str) -> FAISSStore:
             if store is None:
                 store = FAISSStore(collection)
                 _stores[collection] = store
-    store.load()
+                store.load()  # 在锁内加载，确保可见性
+                return store
+    store.load()  # 幂等；已加载时立即返回
     return store
 
 

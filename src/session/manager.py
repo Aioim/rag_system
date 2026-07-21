@@ -167,6 +167,7 @@ class SessionManager:
     ) -> Session:
         """话题切换：保留最近 2 轮（4 条），旧消息归档（软删除，可溯源）"""
         session.context_summary = None
+        session.current_topic = None  # 清除旧话题标签，与新上下文保持一致
         if len(session.messages) > _TOPIC_SWITCH_KEEP_MESSAGES:
             tx.archive_messages_keep_last(session_id, _TOPIC_SWITCH_KEEP_MESSAGES)
             session.messages = session.messages[-_TOPIC_SWITCH_KEEP_MESSAGES:]
