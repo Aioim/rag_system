@@ -190,7 +190,7 @@ def main():
     # ── 7. extract_json_container ───────────────────────────────
     banner("7. extract_json_container — JSON 提取工具")
 
-    from models.json_utils import extract_json_container
+    from utils.json_utils import extract_json_container
 
     # LLM 返回带 markdown code block 的 JSON
     llm_output = """

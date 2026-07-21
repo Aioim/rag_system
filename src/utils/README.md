@@ -64,6 +64,8 @@ safe_json_dumps({"time": datetime.now()})  # → '{"time": "2026-07-21 10:00:00"
 json_dumps_compact({"a": 1, "b": [2, 3]})  # → '{"a":1,"b":[2,3]}'
 ```
 
-## 向后兼容
+## 导入方式
 
-`from models.json_utils import extract_json_container` 仍然可用，但新代码请使用 `from utils.json_utils import ...`。
+```python
+from utils.json_utils import extract_json_container, try_parse_json
+```

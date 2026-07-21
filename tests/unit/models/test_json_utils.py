@@ -1,7 +1,7 @@
 """extract_json_container 单元测试"""
 import pytest
 
-from models.json_utils import extract_json_container
+from utils.json_utils import extract_json_container
 
 
 class TestExtractJsonContainer:
