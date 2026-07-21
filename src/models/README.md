@@ -20,7 +20,8 @@ models/
 ├── session.py       # Session + Message — 会话与消息
 ├── enums.py         # Intent / RetrievalEval / FallbackLevel / DocumentStatus
 ├── llm.py           # LLMProtocol — LLM 客户端协议
-└── api.py           # ChatRequest / ChatResponse / SearchRequest / Source
+├── api.py           # ChatRequest / ChatResponse / SearchRequest / Source
+└── json_utils.py    # 向后兼容重导出 → 已迁移至 src/utils/json_utils.py
 ```
 
 ## 核心数据模型

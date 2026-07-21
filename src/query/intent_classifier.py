@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from logger import logger
 from models.enums import Intent
-from models.json_utils import extract_json_container
+from utils.json_utils import extract_json_container
 from models.llm import LLMProtocol
 
 

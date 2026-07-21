@@ -80,6 +80,9 @@ rag0709/
 │   │   ├── masking.py         # 正则脱敏引擎（密码/token/手机号/身份证等）
 │   │   ├── lazy.py            # 线程安全延迟初始化 LazyLogger
 │   │   └── filters.py         # SensitiveDataFilter + SecurityAuditFilter
+│   ├── utils/                # ✅ 通用工具类模块（JSON 解析/序列化等）
+│   │   ├── __init__.py          # 统一导出
+│   │   └── json_utils.py        # extract_json_container / try_parse_json / safe_json_dumps
 │   ├── models/                # ✅ 共享数据模型（PipelineContext/Chunk/Session/API）
 │   ├── session/               # ✅ SQLite 会话管理（详见 src/session/README.md）
 │   ├── query/                 # ✅ 查询理解层（别名映射/意图分类/上下文融合/查询改写）
@@ -179,6 +182,24 @@ from security import secrets, load_secure_dotenv
 load_secure_dotenv()             # 加载 .env，自动解密 ENC[...]；支持 export KEY= 前缀和行尾注释
 secrets.set_secret("key", "v")   # 内存加密存储
 secrets.get_secret("key")        # 动态解密
+```
+
+### 工具模块
+
+```python
+from utils import extract_json_container, try_parse_json, safe_json_dumps, json_dumps_compact
+
+# 从 LLM 响应中提取 JSON 对象/数组（处理 Markdown 包裹等）
+extract_json_container('```json\n{"key": "val"}\n```')  # → '{"key": "val"}'
+
+# 安全解析 JSON，失败返回 None
+try_parse_json("prefix [1, 2] suffix")  # → [1, 2]
+
+# 安全序列化（不可序列化对象降级为 str()）
+safe_json_dumps({"t": datetime.now()})  # → '{"t": "2026-07-21 10:00:00"}'
+
+# 紧凑序列化
+json_dumps_compact({"a": 1, "b": [2, 3]})  # → '{"a":1,"b":[2,3]}'
 ```
 
 ### 日志模块

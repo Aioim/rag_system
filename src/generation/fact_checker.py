@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 
 from logger import logger
-from models.json_utils import extract_json_container
+from utils.json_utils import extract_json_container
 from models.llm import LLMProtocol
 
 _VALID_STATUSES = {"supported", "unsupported", "contradicted"}
