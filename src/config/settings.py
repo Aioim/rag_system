@@ -175,7 +175,7 @@ class LLMConfig(_BaseConfig):
         if not self.api_key.get_secret_value():
             env_val = os.getenv(self.api_key_env, "")
             if env_val:
-                object.__setattr__(self, "api_key", SecretStr(env_val))
+                self.api_key = SecretStr(env_val)
         return self
 
 
@@ -243,12 +243,12 @@ class LogConfig(_BaseConfig):
     quiet: bool = False
     replace_main_with_filename: bool = True
 
-    SENSITIVE_KEYS: ClassVar[set[str]] = {
+    SENSITIVE_KEYS: ClassVar[frozenset[str]] = frozenset({
         "password", "pwd", "pass", "secret", "token", "api_key", "apikey",
         "authorization", "cookie", "x-api-key", "access_token", "refresh_token",
         "new_password", "old_password", "confirm_password", "credit_card",
         "ssn", "social_security", "passport", "cvv", "pin", "private_key"
-    }
+    })
 
     @field_validator("log_level")
     @classmethod
@@ -465,21 +465,31 @@ class ConfigManager:
         """解密 os.environ 中的 ENC[...] 加密字段（轻量路径，不触发项目级导入链）
 
         必须在从环境变量构建配置之前调用。仅依赖 cryptography.Fernet
-        和 PROJECT_ROOT/.secret_key 文件，不导入 logger / config / security，
+        和 PROJECT_ROOT/environments/.secret_key 文件，不导入 logger / config / security，
         避免与 ConfigManager 自身的初始化形成循环依赖。
         """
         import os as _os
         import re as _re
 
-        _ENC_PATTERN = _re.compile(r'^ENC\[(?P<value>[A-Za-z0-9_\-+=/]+)\]$')
-        _secret_key_path = PROJECT_ROOT / ".secret_key"
+        _ENC_PATTERN = _re.compile(r'^ENC\[(?P<value>[-A-Za-z0-9_=]+)\]$')
+        # 注意：Fernet 使用 URL-safe base64 (RFC 4648 §5)，字符集为 A-Za-z0-9_-
+        # 但 base64 编码包含 = 填充，Fernet.encrypt() 输出的令牌可能以 = 或 == 结尾
+        # 路径与 SecretsManager.SecurityConfig.KEY_FILE 保持一致
+        _secret_key_path = PROJECT_ROOT / "environments" / ".secret_key"
         if not _secret_key_path.exists():
             return
         try:
-            _key = _secret_key_path.read_bytes()
+            _key = _secret_key_path.read_bytes().strip()
             from cryptography.fernet import Fernet as _Fernet
             _fernet = _Fernet(_key)
         except Exception:
+            import logging as _logging
+            # 注意：此处不能使用项目 logger（避免循环导入），使用标准库 logging
+            # 直接输出到 root logger，由应用层统一配置
+            _logging.warning(
+                "[config] 无法初始化 Fernet 解密（密钥文件可能损坏或 "
+                "cryptography 未安装），ENC[...] 加密字段将不被解密"
+            )
             return
         for _k, _v in list(_os.environ.items()):
             _match = _ENC_PATTERN.match(_v)
@@ -490,18 +500,21 @@ class ConfigManager:
                     _match.group("value").encode()
                 ).decode()
             except Exception:
-                pass  # 保留密文，下游校验会捕获
+                import logging as _logging
+                _logging.warning(
+                    "[config] 解密环境变量 %s 的 ENC 值失败，保留原始值", _k
+                )
 
     def _load_full_config(self) -> RAGAppConfig:
         """加载并合并所有配置源"""
         # 0. 加载 .env 文件到 os.environ（仅明文值，不触发项目级导入链）
         #    必须在读取任何环境变量之前执行，否则 .env 中的配置不生效
         from dotenv import load_dotenv
-        load_dotenv(str(PROJECT_ROOT / ".env"))
+        load_dotenv(str(PROJECT_ROOT / ".env"), override=True)
 
         # 0.5 解密 ENC[...] 加密字段（必须在 build config 之前，否则加密值
         #     会作为明文进入配置）。使用独立的轻量解密路径以避免循环导入：
-        #     - 只依赖 cryptography.Fernet + .secret_key 文件
+        #     - 只依赖 cryptography.Fernet + environments/.secret_key 文件
         #     - 不导入 logger / config / security 等模块
         self._decrypt_enc_env_vars()
 
@@ -521,6 +534,17 @@ class ConfigManager:
         # 5. 验证并返回最终配置
         return RAGAppConfig(**final_dict)
 
+    def _init_sub_configs(self, config: RAGAppConfig) -> None:
+        """初始化所有子配置的磁盘目录等资源
+
+        每个子配置的 initialize() 内部使用 exist_ok=True 和 OSError catch，
+        因此多次调用是幂等且安全的。
+        """
+        config.ingestion.initialize()
+        config.log.initialize()
+        config.session.initialize()
+        config.faiss.initialize()
+
     def initialize(self) -> None:
         """显式初始化（通常由属性访问自动触发）"""
         if not self._initialized:
@@ -530,22 +554,22 @@ class ConfigManager:
                         self._config = self._load_full_config()
                         # ENC[...] 解密已在 _load_full_config 内部完成（通过
                         # _decrypt_enc_env_vars），config 构建时环境变量已是明文。
-                        # 此处仅初始化磁盘目录，无需再次调用 load_secure_dotenv。
-                        self._config.ingestion.initialize()
-                        self._config.log.initialize()
-                        self._config.session.initialize()
-                        self._config.faiss.initialize()
+                        self._init_sub_configs(self._config)
                         self._initialized = True
                     except Exception as e:
+                        self._config = None
+                        self._dict_cache = None
                         raise RuntimeError(f"配置加载失败: {e}") from e
 
     def __getattr__(self, name: str) -> Any:
-        if self._config is None:
+        config = self._config
+        if config is None:
             self.initialize()
+            config = self._config
         try:
-            return getattr(self._config, name)
+            return getattr(config, name)
         except AttributeError:
-            available = [attr for attr in dir(self._config) if not attr.startswith("_")]
+            available = [attr for attr in dir(config) if not attr.startswith("_")]
             raise AttributeError(
                 f"配置中不存在属性 '{name}'. 可用属性: {', '.join(available[:20])}"
             ) from None
@@ -589,10 +613,12 @@ class ConfigManager:
             for k in keys[:-1]:
                 current = current.setdefault(k, {})
             current[keys[-1]] = self._parse_override_value(value.strip())
-        # 累加合并，不覆盖之前的 overrides
-        self._overrides = deep_merge(self._overrides, new_overrides)
-        # 已初始化则自动重载
-        if self._initialized:
+        # 累加合并（加锁保护，与 _load_full_config 的读取竞争）
+        with self._lock:
+            self._overrides = deep_merge(self._overrides, new_overrides)
+            was_initialized = self._initialized
+        # 已初始化则自动重载（必须在锁外调用，reload() 内部会获取锁）
+        if was_initialized:
             self.reload()
 
     @classmethod
@@ -614,21 +640,27 @@ class ConfigManager:
         return RAGAppConfig._parse_env_value(value)
 
     def load_from_file(self, config_path: Path) -> None:
-        """直接加载指定的配置文件，并叠加环境变量覆盖"""
+        """直接加载指定的配置文件，并叠加环境变量覆盖
+
+        先完整构建新配置并初始化子资源，再原子替换到 self._config，
+        与 reload() 保持一致的线程安全规约。
+        """
         if not config_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {config_path}")
+        # 解密 ENC[...] 加密字段（与 _load_full_config 保持一致的路径）
+        self._decrypt_enc_env_vars()
         with open(config_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         # 叠加环境变量覆盖和命令行覆盖
         merged = deep_merge(data, RAGAppConfig.from_env())
         merged = deep_merge(merged, self._overrides)
-        self._config = RAGAppConfig(**merged)
-        self._dict_cache = None
-        self._config.ingestion.initialize()
-        self._config.log.initialize()
-        self._config.session.initialize()
-        self._config.faiss.initialize()
-        self._initialized = True
+        new_config = RAGAppConfig(**merged)
+        # 先初始化子资源（I/O 在锁外），全部成功后再原子替换
+        self._init_sub_configs(new_config)
+        with self._lock:
+            self._config = new_config
+            self._dict_cache = None
+            self._initialized = True
 
     def to_yaml(self) -> str:
         """导出当前配置为 YAML（隐藏敏感字段）"""
@@ -638,13 +670,22 @@ class ConfigManager:
         return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
     def reload(self) -> None:
-        """热重载配置（清空缓存并重新加载）"""
-        self._yaml_loader.clear_cache()
-        with self._lock:
-            self._config = None
-            self._dict_cache = None
-            self._initialized = False
-        self.initialize()
+        """热重载配置（清空缓存并重新加载）
+
+        先完整构建新配置，再原子替换，避免 TOCTOU 窗口期
+        （旧代码在锁内设 _config=None 后释放锁再 initialize()，
+        导致其他线程可能抢先初始化或读到 None）。
+        失败时保留旧配置不变，调用方通过异常感知失败。
+        """
+        try:
+            self._yaml_loader.clear_cache()
+            new_config = self._load_full_config()
+            self._init_sub_configs(new_config)
+            with self._lock:
+                self._config = new_config
+                self._dict_cache = None
+        except Exception as e:
+            raise RuntimeError(f"配置重载失败: {e}") from e
         # 别名文件可能已变更，强制重新加载（确保配置路径被加载后重载）
         from query.aliases import alias_manager as _am
         _am.load(self._config.aliases.file_path)
