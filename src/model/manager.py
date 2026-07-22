@@ -295,6 +295,46 @@ class ModelManager:
         return True
 
     # ========================================================================
+    # 推理 API（委托至 inference 模块）
+    # ========================================================================
+
+    def encode(self, texts: str | list[str], **kwargs) -> "np.ndarray":
+        """对文本进行 embedding 编码。
+
+        详见 ``inference.encode()``。
+        """
+        from . import inference as _inference
+        return _inference.encode(texts, **kwargs)
+
+    def rerank(self, query: str, documents: list[str], **kwargs) -> list[dict]:
+        """对查询与候选文档进行相关性排序。
+
+        详见 ``inference.rerank()``。
+        """
+        from . import inference as _inference
+        return _inference.rerank(query, documents, **kwargs)
+
+    def generate(self, prompt: str, **kwargs) -> str:
+        """LLM 文本生成（预留接口，当前未实现）。
+
+        详见 ``inference.generate()``。
+        """
+        from . import inference as _inference
+        return _inference.generate(prompt, **kwargs)
+
+    @property
+    def embedding_model(self):
+        """获取 SentenceTransformer 实例（懒加载 + 双检锁）"""
+        from . import inference as _inference
+        return _inference._get_embedding_model()
+
+    @property
+    def cross_encoder(self):
+        """获取 CrossEncoder 实例（懒加载 + 双检锁）"""
+        from . import inference as _inference
+        return _inference._get_cross_encoder()
+
+    # ========================================================================
     # 内部方法
     # ========================================================================
 
