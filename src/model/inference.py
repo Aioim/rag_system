@@ -47,13 +47,9 @@ def _get_embedding_model() -> SentenceTransformer:
                     "Embedding 模型未下载，请先执行 "
                     "`from model import models; models.download('embedding')`"
                 )
-            try:
-                _embedding_model = SentenceTransformer(
-                    str(path), device=settings.embedding.device
-                )
-            except TypeError:
-                # 兼容测试 mock（_KwargsRecorder 等无 __init__ 参数）
-                _embedding_model = SentenceTransformer()
+            _embedding_model = SentenceTransformer(
+                str(path), device=settings.embedding.device
+            )
     return _embedding_model
 
 
@@ -73,13 +69,9 @@ def _get_cross_encoder() -> CrossEncoder:
                     "Rerank 模型未下载，请先执行 "
                     "`from model import models; models.download('rerank')`"
                 )
-            try:
-                _cross_encoder = CrossEncoder(
-                    str(path), device=settings.embedding.device
-                )
-            except TypeError:
-                # 兼容测试 mock（_KwargsRecorder 等无 __init__ 参数）
-                _cross_encoder = CrossEncoder()
+            _cross_encoder = CrossEncoder(
+                str(path), device=settings.embedding.device
+            )
     return _cross_encoder
 
 

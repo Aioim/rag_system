@@ -94,6 +94,9 @@ class TestEncode:
         received_kwargs = {}
 
         class _KwargsRecorder:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def encode(self, texts, **kwargs):
                 received_kwargs.update(kwargs)
                 n = len(texts) if isinstance(texts, list) else 1
@@ -131,6 +134,9 @@ class TestRerank:
         received_kwargs = {}
 
         class _KwargsRecorder:
+            def __init__(self, *args, **kwargs):
+                pass
+
             def rank(self, query, documents, **kwargs):
                 received_kwargs.update(kwargs)
                 return [{"corpus_id": 0, "score": 1.0}]
