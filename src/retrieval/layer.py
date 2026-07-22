@@ -16,13 +16,14 @@ from logger import logger
 from models.chunk import Chunk
 from models.context import PipelineContext
 from models.enums import RetrievalEval
+from model import models
 from retrieval.bm25_retriever import BM25Retriever
 from retrieval.evaluator import evaluate
 from retrieval.expander import ContextExpander
 from retrieval.fusion import rrf_fuse
-from retrieval.reranker import Reranker, load_cross_encoder, mmr_select
+from retrieval.reranker import Reranker, mmr_select
 from retrieval.store import FAISSStore, get_store
-from retrieval.vector_retriever import VectorRetriever, load_embedding_model
+from retrieval.vector_retriever import VectorRetriever
 
 # 不应被吞没的关键异常（模块级常量，避免每次 retrieve 重新分配）
 _CRITICAL_EXC = (KeyboardInterrupt, SystemExit, asyncio.CancelledError, GeneratorExit)
@@ -46,7 +47,7 @@ class RetrievalLayer:
             return self._encoder
         with self._encoder_lock:
             if self._encoder is None:
-                self._encoder = load_embedding_model()
+                self._encoder = models.embedding_model
             return self._encoder
 
     def _get_cross_encoder(self) -> "CrossEncoder":
@@ -54,7 +55,7 @@ class RetrievalLayer:
             return self._cross_encoder
         with self._cross_encoder_lock:
             if self._cross_encoder is None:
-                self._cross_encoder = load_cross_encoder()
+                self._cross_encoder = models.cross_encoder
             return self._cross_encoder
 
     def _get_bm25(self, store: FAISSStore) -> BM25Retriever:
