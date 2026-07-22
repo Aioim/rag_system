@@ -1,32 +1,20 @@
 """
-demo_config.py — 配置管理模块演示
+01_basic_access.py — 配置管理：基础访问与配置概览
 
 演示内容：
-  1. 基础配置访问（属性 / 点号路径 / get 方法）
-  2. 配置段结构与默认值
-  3. 环境变量覆盖机制
-  4. CLI 参数覆盖（apply_overrides）
-  5. 配置热重载（reload）
-  6. 项目路径工具（PROJECT_ROOT）
+  1. 项目根路径 (PROJECT_ROOT)
+  2. 基础配置访问（属性 / 点号路径 / get 方法 / 默认值）
+  3. 各配置段概览（13 个配置段）
+  4. 敏感信息保护验证
 
 运行方式：
   cd rag0709
-  python examples/01_config/demo_config.py
-
-可选：通过环境变量验证覆盖机制
-  # Windows PowerShell
-  $env:RETRIEVAL__TOP_K="20"
-  python examples/01_config/demo_config.py
-  Remove-Item Env:\RETRIEVAL__TOP_K
-
-  # Linux/macOS
-  RETRIEVAL__TOP_K=20 python examples/01_config/demo_config.py
+  python examples/01_config/01_basic_access.py
 """
 
 import os
 import sys
 
-# 确保项目根目录在 sys.path 中
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 
@@ -42,8 +30,8 @@ def main():
     # ── 1. 项目根路径 ──────────────────────────────────────────
     banner("1. 项目根路径 (PROJECT_ROOT)")
     print(f"  PROJECT_ROOT = {PROJECT_ROOT}")
-    print(f"  类型: {type(PROJECT_ROOT).__name__}")
-    print(f"  是否存在: {PROJECT_ROOT.exists()}")
+    print(f"  类型:          {type(PROJECT_ROOT).__name__}")
+    print(f"  是否存在:      {PROJECT_ROOT.exists()}")
 
     # ── 2. 基础配置访问 ────────────────────────────────────────
     banner("2. 基础配置访问")
@@ -58,12 +46,12 @@ def main():
     print(f"  settings.get('llm.default')       = {settings.get('llm.default')}")
     print(f"  settings.get('chunking.strategy') = {settings.get('chunking.strategy')}")
 
-    # 不存在的键
+    # 不存在的键 — 返回默认值
     result = settings.get("nonexistent.key", "默认值")
     print(f"  settings.get('nonexistent.key', '默认值') = {result!r}")
 
     # ── 3. 各配置段概览 ────────────────────────────────────────
-    banner("3. 配置段概览")
+    banner("3. 配置段概览 (13 段)")
 
     config_sections = [
         ("项目信息", lambda: f"name={settings.project.name}, version={settings.project.version}"),
@@ -89,50 +77,10 @@ def main():
         except Exception as e:
             print(f"  [{label}] ⚠️ 获取失败: {e}")
 
-    # ── 4. CLI 参数覆盖 ────────────────────────────────────────
-    banner("4. CLI 参数覆盖 (apply_overrides)")
+    # ── 4. 敏感信息保护 ────────────────────────────────────────
+    banner("4. 敏感信息保护验证")
 
-    original_top_k = settings.retrieval.top_k
-    print(f"  覆盖前: top_k = {original_top_k}")
-    settings.apply_overrides("retrieval.top_k=50;retrieval.rrf_k=80;retrieval.mmr_lambda=0.9")
-    print(f"  覆盖后: top_k = {settings.retrieval.top_k}")
-    print(f"          rrf_k = {settings.retrieval.rrf_k}")
-    print(f"          mmr_lambda = {settings.retrieval.mmr_lambda}")
-
-    # ── 5. 配置热重载 ──────────────────────────────────────────
-    banner("5. 配置热重载 (reload)")
-
-    old_top_k = settings.retrieval.top_k
-    print(f"  重载前: top_k = {old_top_k}")
-    settings.reload()
-    new_top_k = settings.retrieval.top_k
-    print(f"  重载后: top_k = {new_top_k}")
-    print(f"  说明: reload() 会清空 CLI 覆盖，恢复为 YAML 原始值")
-
-    # ── 6. 环境变量注入验证 ────────────────────────────────────
-    banner("6. 环境变量注入（白名单）")
-
-    print(f"  ENV 环境变量: {os.environ.get('ENV', '(未设置)')}")
-    print(f"  DEBUG 环境变量: {os.environ.get('DEBUG', '(未设置)')}")
-    print(f"  LLM__DEFAULT 环境变量: {os.environ.get('LLM__DEFAULT', '(未设置)')}")
-    print()
-    print("  环境变量命名规则:")
-    print("    RETRIEVAL__TOP_K=10        → retrieval.top_k = 10")
-    print("    LLM__DEFAULT=deepseek-pro → llm.default = 'deepseek-pro'")
-    print("    RAG__CUSTOM__KEY=val      → custom.key = 'val' (RAG__ 逃生前缀)")
-
-    # ── 7. 配置模型验证 ────────────────────────────────────────
-    banner("7. 配置模型验证示例")
-
-    print("  所有配置段都经过 Pydantic v2 校验：")
-    print(f"  ✓ retrieval.top_k >= 1:        {settings.retrieval.top_k}")
-    print(f"  ✓ retrieval.mmr_lambda ∈ [0,1]: {settings.retrieval.mmr_lambda}")
-    print(f"  ✓ chunking.chunk_size > 0:     {settings.chunking.chunk_size}")
-
-    # ── 8. 敏感信息保护 ────────────────────────────────────────
-    banner("8. 敏感信息保护验证")
-
-    print(f"  llm.api_key_env = {settings.llm.api_key_env}")
+    print(f"  llm.api_key_env  = {settings.llm.api_key_env}")
     print(f"  model.hf_token_env = {settings.model.hf_token_env}")
     print(f"  LLM_API_KEY 在 .env 中: {'已设置' if os.environ.get('LLM_API_KEY') else '(未设置)'}")
     print()
@@ -140,12 +88,9 @@ def main():
     print("  敏感信息仅通过 .env 文件配置，支持 Fernet 加密: ENC[...]")
 
     # ── 总结 ───────────────────────────────────────────────────
-    banner("✅ 配置模块演示完成")
+    banner("✅ 配置基础访问演示完成")
     print()
-    print("  扩展阅读:")
-    print("    - 配置优先级: CLI覆盖 > 环境变量 > {env}.yaml > 代码默认值")
-    print("    - 环境切换: ENV=prod python examples/01_config/demo_config.py")
-    print("    - 新增配置: 在 config/dev.yaml 中添加新段，对应 Pydantic 模型")
+    print("  下一步: 02_overrides_env.py — CLI 覆盖 / 热重载 / 环境变量注入")
 
 
 if __name__ == "__main__":

@@ -1,20 +1,17 @@
 """
-demo_ingestion.py — 文档处理模块演示
+02_pipeline_index.py — 文档处理：完整 Pipeline 与 FAISS 索引
 
 演示内容：
-  1. IngestionPipeline 组装
-  2. 解析器选择（docling / pymupdf4llm / mineru / direct）
-  3. 三种分块策略（semantic / fixed / hierarchical）
-  4. 文档处理完整流程
-  5. FAISS 索引持久化
+  1. 创建演示文档
+  2. 执行完整处理 Pipeline（Parser → Chunker → Embedder → FAISS）
+  3. 索引文件检查
+  4. 增量更新验证（重复写入同一 doc_id）
 
 运行方式：
   cd rag0709
-  python examples/11_ingestion/demo_ingestion.py
+  python examples/11_ingestion/02_pipeline_index.py
 
-前置条件：
-  Embedding 模型需已下载: models.download('embedding')
-  首次运行会触发 lazy download，耗时取决于网络。
+前置条件：Embedding 模型已下载
 """
 
 import asyncio
@@ -25,8 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from config import settings, PROJECT_ROOT  # noqa: E402, F401
-_ = settings.env  # 强制触发 initialize()  # noqa: E402
+from config import settings, PROJECT_ROOT  # noqa: E402
+_ = settings.env  # noqa: E402
 
 
 def banner(title: str) -> None:
@@ -51,7 +48,6 @@ async def main():
         except Exception as e:
             print(f"  ❌ 下载失败: {e}")
             print("  请手动下载: models.download('embedding')")
-            print("  或设置 HUGGINGFACE_TOKEN 环境变量后重试")
             return
 
     # ── 2. 创建演示文档 ─────────────────────────────────────────
@@ -138,40 +134,13 @@ async def main():
     print(f"  文件大小: {demo_md.stat().st_size} bytes")
     print(f"  章节: 6章（总则/薪资/休假/报销/考勤/IT）")
 
-    # ── 3. 解析器配置 ───────────────────────────────────────────
-    banner("3. 解析器配置")
-
-    print(f"  当前 PDF 解析器: {settings.ingestion.parsers.get('pdf', 'docling')}")
-    print(f"  当前 Markdown 解析器: {settings.ingestion.parsers.get('md', 'direct')}")
-    print(f"  解析后输出目录: {settings.ingestion.parsed_doc_dir}")
-    print()
-    print("  可用解析器:")
-    print("    docling       — 支持 pdf/docx/pptx/html (默认)")
-    print("    pymupdf4llm   — 轻量 PDF 解析")
-    print("    mineru        — 高精度 PDF 解析(需额外模型)")
-    print("    direct        — 直接读取 md/txt")
-
-    # ── 4. 分块策略 ─────────────────────────────────────────────
-    banner("4. 分块策略")
-
-    print(f"  当前策略: {settings.chunking.strategy}")
-    print(f"  chunk_size: {settings.chunking.chunk_size}")
-    print(f"  overlap:    {settings.chunking.overlap}")
-    print()
-    print("  三种策略对比:")
-    print("    semantic      — SentenceTransformer 语义边界切分，通用")
-    print("    fixed         — 固定窗口 + 滑动步长，结构弱时适用")
-    print("    hierarchical  — 按 Markdown 标题层级切分，文档层级清晰时最佳")
-    print()
-    print("  推荐: 层级清晰的文档使用 hierarchical，通用文档使用 semantic")
-
-    # ── 5. 执行文档处理 ─────────────────────────────────────────
-    banner("5. 执行文档处理 Pipeline")
+    # ── 3. 执行文档处理 ─────────────────────────────────────────
+    banner("3. 执行文档处理 Pipeline")
 
     from ingestion import create_default_pipeline
 
     pipeline = create_default_pipeline()
-    print(f"  Pipeline 已创建: Parser → Chunker → Embedder → FAISSIndexWriter")
+    print(f"  Pipeline: Parser → Chunker → Embedder → FAISSIndexWriter")
     print(f"  Embedding 模型: {settings.embedding.model}")
 
     try:
@@ -184,7 +153,6 @@ async def main():
         print(f"  错误数:       {len(ctx.errors)}")
 
         if ctx.errors:
-            print(f"  错误详情:")
             for err in ctx.errors:
                 print(f"    - {err}")
 
@@ -208,9 +176,11 @@ async def main():
         print(f"  ❌ 处理失败: {e}")
         import traceback
         traceback.print_exc()
+        demo_md.unlink(missing_ok=True)
+        return
 
-    # ── 6. 索引文件检查 ─────────────────────────────────────────
-    banner("6. FAISS 索引文件")
+    # ── 4. 索引文件检查 ─────────────────────────────────────────
+    banner("4. FAISS 索引文件")
 
     idx_dir = PROJECT_ROOT / settings.faiss.index_dir / "demo_collection"
     print(f"  索引目录: {idx_dir}")
@@ -220,8 +190,7 @@ async def main():
             size_kb = f.stat().st_size / 1024
             print(f"    {f.name:<25s} {size_kb:>8.1f} KB")
     else:
-        print(f"  ⚠️ 索引目录不存在（可能使用了不同的 collection 名称）")
-        # 检查 default collection
+        print(f"  ⚠️ 索引目录不存在")
         default_idx = PROJECT_ROOT / settings.faiss.index_dir / "default"
         if default_idx.exists():
             print(f"  检查 default collection:")
@@ -229,8 +198,8 @@ async def main():
                 size_kb = f.stat().st_size / 1024
                 print(f"    {f.name:<25s} {size_kb:>8.1f} KB")
 
-    # ── 7. 同 doc_id 重复写入（增量更新） ───────────────────────
-    banner("7. 增量更新验证（重复写入同一 doc_id）")
+    # ── 5. 增量更新验证 ─────────────────────────────────────────
+    banner("5. 增量更新验证（重复写入同一 doc_id）")
 
     print("  再次处理同一文档（模拟增量更新）...")
     try:
@@ -240,25 +209,16 @@ async def main():
     except Exception as e:
         print(f"  ❌ 失败: {e}")
 
-    # ── 清理 ────────────────────────────────────────────────────
-    banner("8. 清理临时文件")
-
+    # ── 6. 清理 ─────────────────────────────────────────────────
     demo_md.unlink(missing_ok=True)
-    print(f"  已删除临时文档: {demo_md}")
+    print(f"\n  已删除临时文档: {demo_md}")
     print(f"  索引文件保留在: {idx_dir}")
 
     # ── 总结 ───────────────────────────────────────────────────
-    banner("✅ 文档处理模块演示完成")
+    banner("✅ 文档处理 Pipeline 演示完成")
     print()
-    print("  接下来可以运行检索演示:")
-    print("    python examples/08_retrieval/demo_retrieval.py")
-    print()
-    print("  配置项 (settings.ingestion):")
-    print(f"    parsed_doc_dir: {settings.ingestion.parsed_doc_dir}")
-    print(f"    parsers:        {dict(settings.ingestion.parsers)}")
-    print()
-    print("  CLI 演示入口:")
-    print("    python -m ingestion")
+    print("  接下来可运行检索演示:")
+    print("    python examples/08_retrieval/02_retrieve_demo.py")
 
 
 if __name__ == "__main__":
