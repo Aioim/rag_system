@@ -5,7 +5,6 @@ BGE reranker num_labels=1，sentence-transformers CrossEncoder.predict
 MMR 多样性用原始 chunk 向量（FAISS reconstruct）计算余弦——窗口扩展文本
 无现成 embedding，原始向量是足够好的近似（设计文档 5.6 已评审确认）。
 """
-import threading
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -14,34 +13,6 @@ if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
 
 from models.chunk import Chunk
-
-_cross_encoder: "CrossEncoder | None" = None
-_ce_lock = threading.Lock()
-
-
-def load_cross_encoder() -> "CrossEncoder":
-    """从本地路径加载 CrossEncoder（进程内缓存）；未下载抛 RuntimeError"""
-    global _cross_encoder
-    if _cross_encoder is not None:
-        return _cross_encoder
-    with _ce_lock:
-        if _cross_encoder is None:
-            from config import settings
-            from model import models
-
-            path = models.get_path("rerank")
-            if path is None:
-                raise RuntimeError(
-                    "Rerank 模型未下载，请先执行 "
-                    "`from model import models; models.download('rerank')`"
-                )
-            from sentence_transformers import CrossEncoder
-
-            _cross_encoder = CrossEncoder(
-                str(path), device=settings.embedding.device
-            )
-    return _cross_encoder
-
 
 class Reranker:
     def __init__(self, cross_encoder: "CrossEncoder"):
