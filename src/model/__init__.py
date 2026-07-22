@@ -23,6 +23,7 @@
 
 __version__ = "1.1.0"
 
+from . import inference
 from .downloader import (
     AutoStrategy,
     DownloadStrategy,
@@ -40,5 +41,6 @@ __all__ = [
     "ModelManager",
     "MsStrategy",
     "__version__",
+    "inference",
     "models",
 ]
