@@ -62,8 +62,14 @@ class BaseTrainer(ABC):
     # ---- 子类必须实现 ----
 
     @abstractmethod
-    def load_data(self, data_path: Path):
-        """加载并验证训练数据，返回 (train_dataset, eval_dataset)"""
+    def load_data(self, data_path: Path, records: list[dict] | None = None):
+        """加载训练数据，返回 (train_dataset, eval_dataset)。
+
+        Args:
+            data_path: JSONL 数据文件路径
+            records: 已解析的记录列表（由 run() 提供以避免重复解析）。
+                     为 None 时从 data_path 自行加载（兼容直接调用 load_data 的场景）。
+        """
         ...
 
     @abstractmethod
@@ -88,11 +94,13 @@ class BaseTrainer(ABC):
         )
         self._start_time = time.time()
 
-        # 1. 数据校验
-        self._validate_data(data_path)
+        # 1. 加载 + 校验数据（只解析一次 JSONL，load_data 复用）
+        from .data import load_jsonl
+        records = load_jsonl(data_path)
+        self._validate_records(records)
 
-        # 2. 加载数据
-        train_ds, eval_ds = self.load_data(data_path)
+        # 2. 加载数据（复用已解析的 records）
+        train_ds, eval_ds = self.load_data(data_path, records)
 
         # 3. 训练
         adapter_path = self.train(train_ds, eval_ds)
@@ -118,13 +126,12 @@ class BaseTrainer(ABC):
         timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         return f"{self.model_type}_{timestamp}"
 
-    def _validate_data(self, data_path: Path) -> None:
+    def _validate_records(self, records: list[dict]) -> None:
         """使用 data.py 中的校验器检查数据格式"""
-        from .data import VALIDATORS, load_jsonl
+        from .data import VALIDATORS
 
         if self.model_type not in VALIDATORS:
             raise ValueError(f"不支持的模型类型: {self.model_type}")
-        records = load_jsonl(data_path)
         VALIDATORS[self.model_type](records)
 
     def _resolve_device(self) -> torch.device:

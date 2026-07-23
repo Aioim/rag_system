@@ -35,11 +35,12 @@ class RerankerTrainer(BaseTrainer):
         super().__init__(config, base_model_id)
         self._tokenizer: AutoTokenizerType | None = None  # 延迟加载
 
-    def load_data(self, data_path: Path) -> tuple[Dataset, Dataset | None]:
+    def load_data(self, data_path: Path, records: list[dict] | None = None) -> tuple[Dataset, Dataset | None]:
         from .data import split_train_eval
 
-        records = load_jsonl(data_path)
-        # 数据格式校验由 BaseTrainer.run() → _validate_data() 统一执行，此处不再重复
+        if records is None:
+            records = load_jsonl(data_path)
+        # 数据格式校验由 BaseTrainer.run() → _validate_records() 统一执行，此处不再重复
 
         train_records, eval_records = split_train_eval(records, eval_ratio=0.2)
 

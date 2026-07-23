@@ -198,13 +198,22 @@ class LLMTrainer(BaseTrainer):
         except (ImportError, AttributeError, KeyError):
             logger.debug("无法通过 secrets_manager 获取 DEEPSEEK_API_KEY，降级到环境变量")
             api_key = os.getenv("DEEPSEEK_API_KEY")
+            # 如果环境变量中是 ENC[...] 加密格式，尝试解密
+            if api_key and api_key.startswith("ENC[") and api_key.endswith("]"):
+                try:
+                    from security.secrets_manager import secrets as _fallback_sec
+                    api_key = _fallback_sec.decrypt_string(api_key[4:-1])
+                except (ImportError, AttributeError, ValueError):
+                    logger.warning(
+                        "DEEPSEEK_API_KEY 为加密格式但无法解密，API 调用可能失败"
+                    )
         if not api_key:
             raise RuntimeError(
                 "教师模型 API 密钥未配置。请设置 DEEPSEEK_API_KEY 环境变量，"
                 "或等待 src/generation/ 模块实现后走 LLM 路由。"
             )
 
-        from openai import OpenAI
+        from openai import APIError, OpenAI
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -215,7 +224,7 @@ class LLMTrainer(BaseTrainer):
                     messages=[{"role": "user", "content": f"{instruction}\n\n{input_text}"}],
                 )
                 return message.choices[0].message.content
-            except Exception:
+            except (APIError, OSError, TimeoutError):
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                 else:
@@ -223,9 +232,10 @@ class LLMTrainer(BaseTrainer):
 
     # ---- 数据加载 ----
 
-    def load_data(self, data_path):
-        records = load_jsonl(data_path)
-        # 数据格式校验由 BaseTrainer.run() → _validate_data() 统一执行，此处不再重复
+    def load_data(self, data_path, records: list[dict] | None = None):
+        if records is None:
+            records = load_jsonl(data_path)
+        # 数据格式校验由 BaseTrainer.run() → _validate_records() 统一执行，此处不再重复
 
         # 蒸馏模式需要 teacher_output 字段
         if self.teacher_model is not None:
