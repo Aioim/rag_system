@@ -317,12 +317,11 @@ def _resolve_gguf_path(cfg: Any, models: Any) -> Path:
 
     查找顺序：
     1. 如果 gguf_file 是绝对路径 → 直接使用
-    2. 在模型缓存目录下查找: local_models/{org}/{model_name}/{gguf_file}
-    3. 抛出 FileNotFoundError（提示用户下载模型）
+    2. 在模型缓存目录下查找（通过 models.get_path）
+    3. 回退到 local_models/{org}_{model_name}/{gguf_file}（匹配下载器命名）
+    4. 抛出 FileNotFoundError（提示用户下载模型）
     """
-    from pathlib import Path as _Path
-
-    gguf_file = _Path(cfg.gguf_file)
+    gguf_file = Path(cfg.gguf_file)  # noqa: F811 — 模块级已有 Path 导入
     if gguf_file.is_absolute():
         return gguf_file
 
@@ -333,10 +332,10 @@ def _resolve_gguf_path(cfg: Any, models: Any) -> Path:
         if candidate.exists():
             return candidate
 
-    # 尝试 PROJECT_ROOT / local_models / org / model_name / gguf_file
+    # 回退：local_models/{org}_{model_name}/{gguf_file}（匹配下载器 _ 连接约定）
     from config.path import PROJECT_ROOT
-    parts = cfg.llm_model.split("/")
-    fallback = PROJECT_ROOT / "local_models" / parts[0] / parts[1] / cfg.gguf_file
+    safe_name = cfg.llm_model.replace("/", "_")
+    fallback = PROJECT_ROOT / "local_models" / safe_name / cfg.gguf_file
     if fallback.exists():
         return fallback
 

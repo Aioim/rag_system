@@ -45,6 +45,11 @@ LangChain 集成:
         from config import settings
         settings.apply_overrides(f"inference.n_ctx={args.n_ctx}")
 
+    # 重置单例缓存，确保 CLI 覆盖在模型首次加载前生效
+    if args.model or args.n_ctx:
+        from model import inference
+        inference._reset_cache()
+
     import uvicorn
     from model.proxy.server import app
 
