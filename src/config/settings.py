@@ -150,6 +150,7 @@ class LLMConfig(_BaseConfig):
     default: str = "deepseek-v4-pro"
     lightweight: str = "deepseek-v4-flash"
     local: str | None = None
+    local_enabled: bool = False
     api_key: SecretStr = Field(default=SecretStr(""), exclude=True)
     api_key_env: str = "LLM_API_KEY"
     api_base_url: str | None = None
@@ -177,6 +178,18 @@ class LLMConfig(_BaseConfig):
             if env_val:
                 self.api_key = SecretStr(env_val)
         return self
+
+
+class InferenceConfig(_BaseConfig):
+    """本地 LLM 推理配置（llama-cpp-python + GGUF）"""
+    llm_model: str = "Qwen/Qwen3-0.6B"
+    gguf_file: str = "Qwen3-0.6B-Q4_K_M.gguf"
+    n_ctx: int = Field(default=4096, ge=256)
+    n_threads: int | None = None
+    n_gpu_layers: int = Field(default=0, ge=0)
+    default_max_tokens: int = Field(default=512, ge=1)
+    default_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    verbose: bool = False
 
 
 class GenerationConfig(_BaseConfig):
@@ -361,6 +374,7 @@ class RAGAppConfig(BaseModel):
     log: LogConfig = Field(default_factory=LogConfig)
     faiss: FaissConfig = Field(default_factory=FaissConfig)
     finetune: FinetuneConfig = Field(default_factory=FinetuneConfig)
+    inference: InferenceConfig = Field(default_factory=InferenceConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
 
     @field_validator("env")
@@ -712,6 +726,7 @@ __all__ = [
     "FinetuneLoraConfig",
     "FinetuneTrainingConfig",
     "GenerationConfig",
+    "InferenceConfig",
     "IngestionConfig",
     "LLMConfig",
     "LogConfig",

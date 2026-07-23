@@ -112,7 +112,8 @@ embedding:
 llm:
   default: deepseek-v4-pro
   lightweight: deepseek-v4-flash
-  local: null                    # 本地模型路径（可选）
+  local: qwen3-0.6b
+  local_enabled: false
   api_key_env: LLM_API_KEY
   api_base_url: null
   temperatures:
@@ -120,6 +121,19 @@ llm:
     procedure: 0.0
     compare: 0.2
     lookup: 0.0
+
+# --------------------------------------------------------------------------
+# 本地 LLM 推理（llama-cpp-python + GGUF）
+# --------------------------------------------------------------------------
+inference:
+  llm_model: Qwen/Qwen3-0.6B
+  gguf_file: Qwen3-0.6B-Q4_K_M.gguf
+  n_ctx: 4096
+  n_threads: null                    # null=自动检测 CPU 核心数
+  n_gpu_layers: 0                    # 0=纯CPU运行
+  default_max_tokens: 512
+  default_temperature: 0.0           # 管线用（确定性）
+  verbose: false
 
 # --------------------------------------------------------------------------
 # 生成层
