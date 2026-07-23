@@ -29,8 +29,9 @@
 | | | `02_generate_factcheck.py` | 完整生成 / 事实核查 / 引用 / 置信度 | LLM API |
 | `10_core/` | RAG Pipeline | `01_single_multi_turn.py` | 单轮问答 / 多轮对话 | LLM API |
 | | | `02_edge_cases.py` | 模糊短路 / 异常降级 / Fallback 场景 | LLM API |
-| `11_ingestion/` | 文档处理 | `01_parse_chunk.py` | 解析器配置 / 分块策略对比 | 无 |
-| | | `02_pipeline_index.py` | 完整 Pipeline / FAISS 索引 / 增量更新 | Embedding 模型 |
+| `11_ingestion/` | 文档处理 | `01_document_parsing.py` | 解析器选择与执行 / 产物检查 | 无 |
+| | | `02_chunking_strategies.py` | 三种分块策略实际对比 | 无（Semantic 需模型） |
+| | | `03_full_pipeline.py` | 完整 Pipeline / 索引验证 / 增量更新 / 检索验证 | Embedding 模型 |
 | `12_fallback/` | 兜底处理 | `01_web_search.py` | WebSearcher 联网搜索 | 网络 |
 | | | `02_fallback_flow.py` | 三级兜底架构 / 补充检索流程 | 无 |
 | `13_agent/` | ReAct Agent | `01_tools.py` | ToolResult / SearchTool / WebSearchTool | 无 |
@@ -58,7 +59,8 @@ python examples/06_model/01_status_download.py
 python examples/06_model/02_finetune.py
 python examples/08_retrieval/01_architecture.py
 python examples/09_generation/01_assembly_route.py
-python examples/11_ingestion/01_parse_chunk.py
+python examples/11_ingestion/01_document_parsing.py
+python examples/11_ingestion/02_chunking_strategies.py
 python examples/12_fallback/02_fallback_flow.py
 python examples/13_agent/01_tools.py
 
@@ -72,7 +74,7 @@ python examples/10_core/02_edge_cases.py
 python examples/13_agent/02_react_loop.py
 
 # ── 需要 Embedding 模型（需先下载: models.download('embedding')） ──
-python examples/11_ingestion/02_pipeline_index.py
+python examples/11_ingestion/03_full_pipeline.py
 
 # ── 需要 FAISS 索引（需先运行 ingestion 建库） ──
 python examples/08_retrieval/02_retrieve_demo.py
