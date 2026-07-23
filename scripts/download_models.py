@@ -86,14 +86,6 @@ def show_status() -> None:
         model_id = models.get_default_model_id(mt) or "N/A"
         info(f"  {mark} {mt}: {model_id}")
 
-    # 列出额外已下载模型
-    downloaded = models.list_downloaded()
-    defaults = set(models._defaults.values())
-    extra = {k: v for k, v in downloaded.items() if k not in defaults}
-    if extra:
-        info("\n其他已下载模型:")
-        for model_id, path in extra.items():
-            info(f"  - {model_id}")
 
 
 def main() -> None:
