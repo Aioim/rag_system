@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from huggingface_hub.utils import HfHubHTTPError, RepositoryNotFoundError
 
 from logger import logger
@@ -307,6 +307,67 @@ class ModelDownloader:
             logger.info(f"已删除模型目录: {local_dir}")
             return True
         return False
+
+    def download_gguf(self, model_id: str, gguf_filename: str) -> Path:
+        """下载指定的 GGUF 文件到模型目录。
+
+        利用 huggingface_hub.hf_hub_download 下载单个文件，
+        自动继承 cache_dir / endpoint / token 配置，支持断点续传和重试。
+
+        Args:
+            model_id: HuggingFace repo_id，如 "Qwen/Qwen3-0.6B"
+            gguf_filename: GGUF 文件名，如 "Qwen3-0.6B-Q4_K_M.gguf"
+
+        Returns:
+            下载后的本地文件路径
+
+        Raises:
+            RuntimeError: 下载失败（超过 max_retries）
+        """
+        model_id = _validate_model_id(model_id)
+        model_dir = self._cache_dir / model_id.replace("/", "_")
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        last_error: Exception | None = None
+        delay = 1.0
+        for attempt in range(self._max_retries + 1):
+            try:
+                local_path = hf_hub_download(
+                    repo_id=model_id,
+                    filename=gguf_filename,
+                    local_dir=model_dir,
+                    token=self._hf_token,
+                    endpoint=self._endpoint,
+                    resume_download=True,
+                )
+                logger.info(
+                    f"GGUF 文件已下载: {gguf_filename} → {local_path}"
+                )
+                return Path(local_path)
+            except (HfHubHTTPError, RepositoryNotFoundError) as e:
+                last_error = e
+                if attempt == self._max_retries:
+                    break
+                logger.warning(
+                    f"GGUF 下载失败 (attempt {attempt + 1}/{self._max_retries + 1}): "
+                    f"{e}，{delay:.0f}s 后重试"
+                )
+                time.sleep(delay)
+                delay *= 2
+            except OSError as e:
+                last_error = e
+                if attempt == self._max_retries:
+                    break
+                logger.warning(
+                    f"GGUF 下载 IO 错误 (attempt {attempt + 1}/{self._max_retries + 1}): "
+                    f"{e}，{delay:.0f}s 后重试"
+                )
+                time.sleep(delay)
+                delay *= 2
+
+        raise RuntimeError(
+            f"GGUF 文件下载失败（已重试 {self._max_retries} 次）: {last_error}"
+        )
 
 
 # ============================================================================
