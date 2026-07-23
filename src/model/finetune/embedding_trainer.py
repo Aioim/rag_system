@@ -14,7 +14,7 @@ from sentence_transformers.sentence_transformer.training_args import (
 
 from .base import BaseTrainer
 from .config import FinetuneConfig
-from .data import load_jsonl, validate_embedding_data
+from .data import load_jsonl
 
 
 class EmbeddingTrainer(BaseTrainer):
@@ -33,7 +33,7 @@ class EmbeddingTrainer(BaseTrainer):
         from .data import split_train_eval
 
         records = load_jsonl(data_path)
-        validate_embedding_data(records)
+        # 数据格式校验由 BaseTrainer.run() → _validate_data() 统一执行，此处不再重复
 
         # sentence-transformers MultipleNegativesRankingLoss 需要
         # InputExample(texts=[query, positive, negative])

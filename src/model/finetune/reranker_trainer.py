@@ -19,7 +19,7 @@ from transformers import (
 
 from .base import BaseTrainer
 from .config import FinetuneConfig
-from .data import load_jsonl, validate_reranker_data
+from .data import load_jsonl
 
 
 class RerankerTrainer(BaseTrainer):
@@ -39,7 +39,7 @@ class RerankerTrainer(BaseTrainer):
         from .data import split_train_eval
 
         records = load_jsonl(data_path)
-        validate_reranker_data(records)
+        # 数据格式校验由 BaseTrainer.run() → _validate_data() 统一执行，此处不再重复
 
         train_records, eval_records = split_train_eval(records, eval_ratio=0.2)
 

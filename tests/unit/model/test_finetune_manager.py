@@ -32,13 +32,12 @@ class TestFinetuneAPI:
             result = BaseTrainer.scan_finetuned(Path(tmp))
             assert result == {}
 
-    def test_invalid_model_type_raises(self):
+    def test_invalid_model_type_raises(self, monkeypatch):
         """models.finetune() 对无效类型应报错"""
-        # 需要确保 models 已初始化
-        try:
-            models._ensure_init()
-        except Exception:
-            pass
+        # 使用 monkeypatch 设置默认值，避免触发真实初始化副作用，
+        # 也不污染单例的 _initialized 状态到后续测试
+        monkeypatch.setattr(models, '_defaults', {"embedding": "BAAI/bge-large-zh-v1.5"}, raising=False)
+        monkeypatch.setattr(models, '_initialized', True, raising=False)
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -88,7 +87,7 @@ class TestFinetuneAPI:
                     r=16,
                     alpha=0.3,
                 )
-            except (ValueError, Exception):
+            except ValueError:
                 pass
 
             assert config.lora.r == 16, f"lora.r 应为 16，实际: {config.lora.r}"
@@ -108,6 +107,10 @@ class TestFinetuneAPI:
 
         yaml_cfg = FinetuneConfig()
         yaml_cfg.training.epochs = 99  # 模拟 YAML 自定义值（代码默认为 3）
+
+        # 确保 models 单例在测试环境中正确初始化，避免受其他测试污染
+        monkeypatch.setattr(models, '_defaults', {"embedding": "BAAI/bge-large-zh-v1.5"}, raising=False)
+        monkeypatch.setattr(models, '_initialized', True, raising=False)
 
         monkeypatch.setattr(
             "model.finetune.config.get_finetune_config", lambda: yaml_cfg

@@ -152,10 +152,10 @@ class TestAutoStrategy:
         hf.download.return_value = tmp_path / "org" / "model"
 
         strategy = AutoStrategy(ms, hf)
-        result = strategy.download("org/model", force=False, cache_dir=tmp_path)
+        result = strategy.download("org/model", cache_dir=tmp_path)
 
         ms.download.assert_called_once()
-        hf.download.assert_called_once_with("org/model", False, tmp_path)
+        hf.download.assert_called_once_with("org/model", tmp_path)
 
     def test_falls_back_when_ms_not_available(self, tmp_path):
         """modelscope 不可用时回退 HF"""
@@ -165,7 +165,7 @@ class TestAutoStrategy:
         hf.download.return_value = tmp_path / "org" / "model"
 
         strategy = AutoStrategy(ms, hf)
-        result = strategy.download("org/model", force=False, cache_dir=tmp_path)
+        result = strategy.download("org/model", cache_dir=tmp_path)
 
         hf.download.assert_called_once()
 
@@ -224,7 +224,7 @@ class TestModelDownloader:
 
         result = dl.download("org/model")
         mock_strategy.download.assert_called_once_with(
-            "org/model", False, tmp_path
+            "org/model", tmp_path
         )
 
     def test_download_force_re_downloads(self, tmp_path):

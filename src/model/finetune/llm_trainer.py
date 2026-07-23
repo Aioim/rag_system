@@ -195,7 +195,8 @@ class LLMTrainer(BaseTrainer):
             from security import secrets as _sec
             secret_obj = _sec.get_secret("DEEPSEEK_API_KEY", required=False)
             api_key = secret_obj.get() if secret_obj else os.getenv("DEEPSEEK_API_KEY")
-        except Exception:
+        except (ImportError, AttributeError, KeyError):
+            logger.debug("无法通过 secrets_manager 获取 DEEPSEEK_API_KEY，降级到环境变量")
             api_key = os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
             raise RuntimeError(
@@ -224,7 +225,7 @@ class LLMTrainer(BaseTrainer):
 
     def load_data(self, data_path):
         records = load_jsonl(data_path)
-        validate_llm_data(records)
+        # 数据格式校验由 BaseTrainer.run() → _validate_data() 统一执行，此处不再重复
 
         # 蒸馏模式需要 teacher_output 字段
         if self.teacher_model is not None:
@@ -285,7 +286,7 @@ class LLMTrainer(BaseTrainer):
             padding="max_length",
             max_length=self.config.training.max_seq_length,
         )
-        tokenized["labels"] = tokenized["input_ids"].copy()
+        tokenized["labels"] = [ids.copy() for ids in tokenized["input_ids"]]
 
         # Mask input tokens — only response tokens should contribute to loss
         prefix_texts = [
@@ -316,7 +317,7 @@ class LLMTrainer(BaseTrainer):
                 padding="max_length",
                 max_length=self.config.training.max_seq_length,
             )
-            tokenized["teacher_labels"] = teacher_tokenized["input_ids"].copy()
+            tokenized["teacher_labels"] = [ids.copy() for ids in teacher_tokenized["input_ids"]]
 
             # Mask input tokens for teacher labels too
             for i in range(len(tokenized["teacher_labels"])):

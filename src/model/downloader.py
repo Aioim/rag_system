@@ -43,10 +43,13 @@ def _validate_model_id(model_id: str) -> str:
 # ============================================================================
 
 class DownloadStrategy(Protocol):
-    """下载策略协议 — 只定义"如何下载"，不关心本地状态"""
+    """下载策略协议 — 只定义"如何下载"，不关心本地状态
 
-    def download(self, model_id: str, force: bool,
-                 cache_dir: Path, **kwargs) -> Path: ...
+    ``force`` 逻辑由 ModelDownloader.download() 统一处理（检查
+    is_downloaded → 跳过或委托策略），策略无须感知。
+    """
+
+    def download(self, model_id: str, cache_dir: Path, **kwargs) -> Path: ...
 
 
 # ============================================================================
@@ -63,7 +66,7 @@ class HfStrategy:
         self._token = token
         self._max_retries = max_retries
 
-    def download(self, model_id: str, force: bool,
+    def download(self, model_id: str,
                  cache_dir: Path, **kwargs) -> Path:
         """通过 HuggingFace / hf-mirror 下载模型"""
         local_dir = cache_dir / model_id
@@ -117,7 +120,7 @@ class MsStrategy:
                 "modelscope 未安装。请运行: pip install modelscope"
             ) from e
 
-    def download(self, model_id: str, force: bool,
+    def download(self, model_id: str,
                  cache_dir: Path, **kwargs) -> Path:
         """通过 ModelScope 下载模型"""
         target_dir = cache_dir / model_id
@@ -129,7 +132,7 @@ class MsStrategy:
                 model_id,
                 cache_dir=str(cache_dir / ".modelscope_cache"),
             )
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:
             raise RuntimeError(
                 f"ModelScope 下载失败: {model_id}\n"
                 f"  错误: {e}\n"
@@ -139,13 +142,18 @@ class MsStrategy:
         # 从 ModelScope 缓存目录复制到项目标准路径
         tmp_path = Path(tmp_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-        for f in tmp_path.iterdir():
-            dst = target_dir / f.name
-            if not dst.exists():
-                if f.is_dir():
-                    shutil.copytree(str(f), str(dst))
-                else:
-                    shutil.copy2(str(f), str(dst))
+        try:
+            for f in tmp_path.iterdir():
+                dst = target_dir / f.name
+                if not dst.exists():
+                    if f.is_dir():
+                        shutil.copytree(str(f), str(dst))
+                    else:
+                        shutil.copy2(str(f), str(dst))
+        except OSError:
+            # 拷贝失败时清理不完整的目标目录，避免后续 is_downloaded() 误判
+            shutil.rmtree(target_dir, ignore_errors=True)
+            raise
 
         # 验证权重文件（递归检查，ModelScope 可能嵌套存放）
         if not _has_weights(target_dir, recursive=True):
@@ -169,17 +177,17 @@ class AutoStrategy:
         self._ms = ms
         self._hf = hf
 
-    def download(self, model_id: str, force: bool,
+    def download(self, model_id: str,
                  cache_dir: Path, **kwargs) -> Path:
         """先尝试 ModelScope，失败回退 HuggingFace"""
         try:
-            return self._ms.download(model_id, force, cache_dir)
+            return self._ms.download(model_id, cache_dir)
         except RuntimeError as e:
             logger.info(
                 f"ModelScope 下载失败，回退到 HuggingFace: {model_id} "
                 f"（原因: {e}）"
             )
-            return self._hf.download(model_id, force, cache_dir)
+            return self._hf.download(model_id, cache_dir)
 
 
 # ============================================================================
@@ -264,7 +272,7 @@ class ModelDownloader:
             logger.info(f"模型已存在，跳过下载: {model_id} → {local_dir}")
             return local_dir
 
-        return self._strategy.download(model_id, force, self._cache_dir)
+        return self._strategy.download(model_id, self._cache_dir)
 
     def is_downloaded(self, model_id: str) -> bool:
         """检查模型是否已下载（目录存在且在任意深度包含模型权重文件）"""

@@ -93,8 +93,12 @@ class ModelManager:
     # 公共 API
     # ========================================================================
 
-    def download_all(self) -> list[Path]:
-        """下载所有默认模型，返回已下载的路径列表"""
+    def download_all(self, strict: bool = False) -> list[Path]:
+        """下载所有默认模型，返回已下载的路径列表。
+
+        Args:
+            strict: True 时部分失败即抛异常；False（默认）时返回成功项并记录警告。
+        """
         self._ensure_init()
         paths: list[Path] = []
         errors: dict[str, str] = {}
@@ -105,12 +109,14 @@ class ModelManager:
                 path = self._download_by_id(model_id)
                 paths.append(path)
             except (ValueError, RuntimeError, OSError) as e:
-                logger.error(f"下载失败 [{model_type}] {model_id}: {e}")
+                logger.warning(f"下载失败 [{model_type}] {model_id}: {e}")
                 errors[model_type] = str(e)
         if errors:
-            logger.error(f"部分模型下载失败: {errors}")
-            raise RuntimeError(
-                f"部分模型下载失败: {errors}"
+            if strict:
+                raise RuntimeError(f"部分模型下载失败: {errors}")
+            logger.warning(
+                f"部分模型下载失败 (已跳过): {errors}，"
+                f"成功: {[p.name for p in paths]}"
             )
         return paths
 
@@ -243,6 +249,11 @@ class ModelManager:
                 f"别名: {list(_MODEL_TYPE_ALIASES.keys())}"
             )
         base_model_id = self._defaults[resolved_type]
+
+        # 优先使用本地缓存，避免重复下载
+        local_path = self.get_path(resolved_type)
+        if local_path is not None:
+            base_model_id = str(local_path)
 
         # 选择 Trainer
         data_path_obj = Path(data_path) if not isinstance(data_path, Path) else data_path
