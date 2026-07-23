@@ -345,6 +345,15 @@ class ModelManager:
         from . import inference as _inference
         return _inference._get_cross_encoder()
 
+    @property
+    def local_llm(self):
+        """获取 LocalLLM 推理引擎实例（懒加载 + 双检锁）
+
+        首次访问时从 settings.inference 读取配置并创建实例。
+        """
+        from . import inference as _inference
+        return _inference.get_local_llm()
+
     # ========================================================================
     # 内部方法
     # ========================================================================
