@@ -1,5 +1,5 @@
 """
-02_chunking_strategies.py — 文档分块：三种策略对比
+03_chunking_strategies.py — 文档分块：三种策略对比
 
 演示内容：
   1. 加载演示文本（优先复用 01 解析产物，独立运行时内嵌降级）
@@ -9,7 +9,7 @@
 
 运行方式：
   cd rag0709
-  python examples/11_ingestion/02_chunking_strategies.py
+  python examples/11_ingestion/03_chunking_strategies.py
 
 前置条件: Semantic 策略需 Embedding 模型（缺失时自动跳过）
 """
@@ -166,6 +166,8 @@ async def main():
             sizes = [len(c.text) for c in sem_chunks]
             print(f"  平均大小: {sum(sizes)/len(sizes):.0f} chars")
             print(f"  最小/最大: {min(sizes)} / {max(sizes)} chars")
+            for c in sem_chunks:
+                print(c.text.replace("\n", " "))
         _print_chunk_preview(sem_chunks, "SemanticChunker")
 
     # ── 5. 三种策略对比汇总 ───────────────────────────────────────
@@ -191,7 +193,7 @@ async def main():
 
     banner("✅ 分块策略对比演示完成")
     print()
-    print("  下一步: 03_full_pipeline.py — 完整 Pipeline + 索引验证")
+    print("  下一步: 04_full_pipeline.py — 完整 Pipeline + 索引验证")
 
 
 if __name__ == "__main__":

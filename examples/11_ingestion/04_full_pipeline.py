@@ -1,5 +1,5 @@
 """
-03_full_pipeline.py — 文档处理：完整 Pipeline 与 FAISS 索引
+04_full_pipeline.py — 文档处理：完整 Pipeline 与 FAISS 索引
 
 演示内容：
   1. 依赖检查（Embedding 模型自动下载）
@@ -11,7 +11,7 @@
 
 运行方式：
   cd rag0709
-  python examples/11_ingestion/03_full_pipeline.py
+  python examples/11_ingestion/04_full_pipeline.py
 
 前置条件：Embedding 模型已下载（脚本会自动检查并下载）
 """
