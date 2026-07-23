@@ -7,6 +7,7 @@
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -27,7 +28,6 @@ def run(force: bool = False, output_path: str | None = None) -> bool:
         True 表示密钥已就绪（生成成功或已存在）
     """
     from cryptography.fernet import Fernet
-    from security.secrets_manager import generate_key_file
 
     key_path = Path(output_path) if output_path else PROJECT_ROOT / "environments" / ".secret_key"
 
@@ -43,7 +43,10 @@ def run(force: bool = False, output_path: str | None = None) -> bool:
         # 原子写入
         key = Fernet.generate_key()
         tmp = key_path.with_suffix(".tmp")
-        tmp.write_bytes(key)
+        with open(tmp, 'wb') as f:
+            f.write(key)
+            f.flush()
+            os.fsync(f.fileno())
         tmp.replace(key_path)
         ok(f"密钥已生成: {key_path}")
         info("请确保 .gitignore 包含 .secret_key 和 *.key")
