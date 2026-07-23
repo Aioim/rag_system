@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 from _common import PROJECT_ROOT, banner, fail, info, ok, warn
@@ -93,18 +94,23 @@ def run(
         warn("未输入任何敏感值，.env 未加密")
         return True  # 不算失败，可能已手动填写
 
-    # Step 4: 替换占位符为明文
+    # Step 4: 替换占位符为明文（仅保留在内存中）
     content = env_path.read_text(encoding="utf-8")
     for key, val in replacements.items():
         placeholder = re.compile(rf"^({re.escape(key)})=.*$", re.MULTILINE)
         content = placeholder.sub(f"{key}={val}", content)
-    env_path.write_text(content, encoding="utf-8")
 
-    # Step 5: 加密 .env 中的敏感字段
+    # Step 5: 写入临时文件 → 加密到目标路径 → 清理临时文件
+    tmp_path = None
     try:
         from security.env_encryptor import process_env_file
 
-        process_env_file(str(env_path), str(out_path))
+        tmp_file = tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False)
+        tmp_path = tmp_file.name
+        tmp_file.write(content)
+        tmp_file.close()
+
+        process_env_file(tmp_path, str(out_path))
 
         # Step 6: 如果输出路径不同于输入路径，将加密结果复制回输入路径
         if out_path.resolve() != env_path.resolve():
@@ -115,6 +121,9 @@ def run(
     except Exception as e:
         fail(f"加密失败: {e}")
         return False
+    finally:
+        if tmp_path is not None:
+            os.unlink(tmp_path)
 
 
 def main() -> None:
