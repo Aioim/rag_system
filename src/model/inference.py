@@ -19,13 +19,6 @@ _cross_encoder: CrossEncoder | None = None
 _embedding_lock = threading.Lock()
 _cross_encoder_lock = threading.Lock()
 
-_GENERATE_NOT_IMPLEMENTED_MSG = (
-    "generate() 尚未实现。推荐方案：llama-cpp-python + GGUF 量化模型。\n"
-    "  - CPU 友好，内存占用低（INT4 量化后约 4-8 GB）\n"
-    "  - 安装: pip install llama-cpp-python\n"
-    "  - 使用: from llama_cpp import Llama; llm = Llama(model_path=\"model.gguf\")\n"
-    "  - 项目当前 LLM 生成走云端 DeepSeek API，本地推理作为后续迭代方向。"
-)
 
 
 # ============================================================================
@@ -112,15 +105,33 @@ def rerank(query: str, documents: list[str], **kwargs) -> list[dict]:
 
 
 def generate(prompt: str, **kwargs) -> str:
-    """LLM 文本生成（预留接口，当前未实现）。
+    """LLM 文本生成（本地 llama-cpp-python + GGUF 推理）
 
-    推荐方案：llama-cpp-python + GGUF 量化模型。
-    项目当前 LLM 生成走云端 DeepSeek API，本地推理作为后续迭代方向。
+    首次调用时自动加载模型（懒加载），后续调用复用已加载的实例。
+
+    Args:
+        prompt: 输入提示文本
+        **kwargs: 透传给 LocalLLM.__call__()
+            - max_tokens: 最大生成 token 数（默认 512）
+            - temperature: 温度（默认从 settings.inference.default_temperature）
+            - stop: 停止词列表
+
+    Returns:
+        生成的文本
 
     Raises:
-        NotImplementedError: 始终抛出，消息体包含方案说明。
+        ImportError: llama-cpp-python 未安装
+        FileNotFoundError: GGUF 模型文件不存在
     """
-    raise NotImplementedError(_GENERATE_NOT_IMPLEMENTED_MSG)
+    llm = get_local_llm()
+    # 使用配置中的默认 temperature，除非调用方显式指定
+    if "temperature" not in kwargs:
+        from config import settings
+        kwargs["temperature"] = settings.inference.default_temperature
+    if "max_tokens" not in kwargs:
+        from config import settings
+        kwargs["max_tokens"] = settings.inference.default_max_tokens
+    return llm(prompt, **kwargs)
 
 
 # ============================================================================
@@ -268,6 +279,74 @@ class LocalLLM:
         return await loop.run_in_executor(None, lambda: self(prompt, **kwargs))
 
 
+# ---- 进程级单例 ------------------------------------------------------------
+
+
+_local_llm_instance: LocalLLM | None = None
+_local_llm_lock = threading.Lock()
+
+
+def get_local_llm() -> LocalLLM:
+    """获取进程级 LocalLLM 单例（懒加载 + 双检锁）
+
+    从 settings.inference 读取模型路径和参数。首次调用时自动加载配置。
+    """
+    global _local_llm_instance
+    if _local_llm_instance is not None:
+        return _local_llm_instance
+    with _local_llm_lock:
+        if _local_llm_instance is None:
+            from config import settings
+            from model import models
+
+            cfg = settings.inference
+            # 查找 GGUF 文件：优先本地路径，其次模型缓存目录
+            gguf_path = _resolve_gguf_path(cfg, models)
+            _local_llm_instance = LocalLLM(
+                model_path=gguf_path,
+                n_ctx=cfg.n_ctx,
+                n_threads=cfg.n_threads,
+                n_gpu_layers=cfg.n_gpu_layers,
+                verbose=cfg.verbose,
+            )
+    return _local_llm_instance
+
+
+def _resolve_gguf_path(cfg: Any, models: Any) -> Path:
+    """解析 GGUF 文件路径。
+
+    查找顺序：
+    1. 如果 gguf_file 是绝对路径 → 直接使用
+    2. 在模型缓存目录下查找: local_models/{org}/{model_name}/{gguf_file}
+    3. 抛出 FileNotFoundError（提示用户下载模型）
+    """
+    from pathlib import Path as _Path
+
+    gguf_file = _Path(cfg.gguf_file)
+    if gguf_file.is_absolute():
+        return gguf_file
+
+    # 尝试从模型缓存目录查找
+    model_path = models.get_path(cfg.llm_model)
+    if model_path is not None:
+        candidate = model_path / cfg.gguf_file
+        if candidate.exists():
+            return candidate
+
+    # 尝试 PROJECT_ROOT / local_models / org / model_name / gguf_file
+    from config.path import PROJECT_ROOT
+    parts = cfg.llm_model.split("/")
+    fallback = PROJECT_ROOT / "local_models" / parts[0] / parts[1] / cfg.gguf_file
+    if fallback.exists():
+        return fallback
+
+    raise FileNotFoundError(
+        f"GGUF 模型文件未找到: {cfg.gguf_file}\n"
+        f"请先下载 {cfg.llm_model} 模型，并将 GGUF 文件放入模型目录，"
+        f"或设置绝对路径: settings.apply_overrides('inference.gguf_file=/path/to/model.gguf')"
+    )
+
+
 # ============================================================================
 # 测试辅助
 # ============================================================================
@@ -275,6 +354,7 @@ class LocalLLM:
 
 def _reset_cache() -> None:
     """重置模块级模型缓存（仅用于测试隔离）"""
-    global _embedding_model, _cross_encoder
+    global _embedding_model, _cross_encoder, _local_llm_instance
     _embedding_model = None
     _cross_encoder = None
+    _local_llm_instance = None
