@@ -147,30 +147,38 @@ DEMO_DOC = """# 员工手册
 """
 
 
-def _demo_pdf_parsing(pdf_path):
+async def _demo_pdf_parsing(pdf_path):
     """解析真实 PDF 文件并提取图片，生成含图片引用的 Markdown
 
     技术路线：
       1. docling 解析 PDF → Markdown 文本（含 <!-- image --> 占位符）
       2. PyMuPDF (fitz) 提取内嵌图片 → 保存为 PNG
       3. 将 <!-- image --> 替换为 ![](images/xxx.png) 引用
+
+    docling 转换通过 asyncio.to_thread 放入线程池执行，避免阻塞事件循环。
     """
+    import asyncio
     import re
     import time
 
     import fitz
 
-    from docling.document_converter import DocumentConverter
-
     print(f"  PDF 文件: {pdf_path.name}")
     print(f"  文件大小: {pdf_path.stat().st_size / 1024:.0f} KB")
 
-    # ── 5a. docling 解析文本 ──────────────────────────────────────
-    print(f"\n  [5a] docling 解析文本...")
+    # ── 5a. docling 解析文本（在线程池中执行，避免阻塞事件循环）───
+    print(f"\n  [5a] docling 解析文本（线程池）...")
     t0 = time.perf_counter()
-    converter = DocumentConverter()
-    result = converter.convert(str(pdf_path))
-    md_text = result.document.export_to_markdown()
+
+    def _do_docling_convert(pdf_path_str: str) -> str:
+        """在线程中执行 docling 转换（同步操作）"""
+        from docling.document_converter import DocumentConverter
+
+        converter = DocumentConverter()
+        result = converter.convert(pdf_path_str)
+        return result.document.export_to_markdown()
+
+    md_text = await asyncio.to_thread(_do_docling_convert, str(pdf_path))
     docling_ms = (time.perf_counter() - t0) * 1000
     print(f"    耗时: {docling_ms:.0f} ms")
     print(f"    Markdown 长度: {len(md_text):,} 字符")
@@ -356,7 +364,7 @@ async def main():
         print(f"  ⚠️ PDF 文件不存在: {pdf_path}")
         print(f"  跳过 PDF 解析演示")
     else:
-        _demo_pdf_parsing(pdf_path)
+        await _demo_pdf_parsing(pdf_path)
 
     # ── 6. 清理与总结 ─────────────────────────────────────────────
     banner("6. 清理临时文件")
