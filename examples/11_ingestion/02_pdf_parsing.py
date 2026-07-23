@@ -3,9 +3,14 @@
 
 演示内容：
   1. 配置参数说明（解析器选择 / 图片提取相关配置）
-  2. 模式 A — 纯文本解析（docling 直接导出，<!-- image --> 占位符原样保留）
-  3. 模式 B — 含图片解析（docling 文本 + fitz 提取图片 + 注入 ![](ref) 引用）
+  2. 模式 A — ParserStage 纯文本解析（<!-- image --> 占位符原样保留）
+  3. 模式 B — get_parser("docling") + fitz 提取图片 + 注入 ![](ref)
   4. 两种模式对比（Markdown 长度、图片引用数、耗时）
+
+使用的 src/ingestion 封装方法：
+  - ingestion.parser.ParserStage      — Pipeline Stage，自动选择解析器+异步化
+  - ingestion.parsers.get_parser()    — 按名称获取解析器实例（带缓存）
+  - ingestion.context.PipelineContext  — 全链路数据容器
 
 运行方式：
   cd rag0709
@@ -13,7 +18,7 @@
 
 前置条件：
   - pip install pymupdf  （fitz 图片提取）
-  - docling 已安装       （PDF → Markdown 文本）
+  - docling 已安装       （PDF → Markdown 文本，src/ingestion 自动加载）
 
 无需 Embedding 模型或 LLM API
 """
@@ -46,15 +51,20 @@ from config import settings  # noqa: E402
 # settings.ingestion.mineru.models_dir — MinerU 模型目录
 #   默认: local_models/mineru
 #
-# ── 图片提取相关（本示例） ─────────────────────────────────────────────
+# ── 使用的 src/ingestion API ───────────────────────────────────────────
 #
-# 图片提取模式由调用方式决定，不通过全局配置切换：
-#   模式 A（无图片）: 仅调用 docling export_to_markdown()，不做后处理
-#   模式 B（含图片）: docling + fitz 提取图片 + 正则替换 <!-- image -->
+# 模式 A — 高层 API（推荐日常使用）:
+#   ingestion.parser.ParserStage    — 自动根据文件扩展名选择解析器
+#   ingestion.context.Document      — 文档元数据（doc_id/source_path/file_type）
+#   ingestion.context.PipelineContext — 数据容器，贯穿全链路
 #
-# 受控参数（在代码中调整）：
-#   DO_IMAGE_EXTRACTION: bool = True    # 是否执行 fitz 图片提取
-#   IMAGE_FORMAT: str = "png"           # fitz 提取图片的保存格式
+# 模式 B — 底层 API（需要精细控制时使用）:
+#   ingestion.parsers.get_parser("docling")  — 直接获取解析器实例
+#   parser.parse(pdf_path, output_dir)       — 同步调用（需自行 to_thread）
+#
+# 图片提取（src/ingestion 暂无封装，本示例用 fitz 演示）:
+#   pip install pymupdf → import fitz
+#   fitz.open(pdf) → page.get_images() → extract_image(xref)
 #
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -82,42 +92,66 @@ def _print_config_overview() -> None:
     print(f"    pymupdf4llm   — 轻量快速，适合纯文本文档")
     print(f"    mineru        — 高精度，支持 OCR + 图片提取（需额外模型）")
     print()
-    print(f"  图片提取模式（本示例通过代码控制，非全局配置）:")
-    print(f"    模式 A — 纯文本: docling → Markdown（<!-- image --> 占位符）")
-    print(f"    模式 B — 含图片: docling + fitz 提取 → ![](ref) 实际引用")
-    print(f"    切换: 在代码中设置 DO_IMAGE_EXTRACTION = True/False")
+    print(f"  src/ingestion 封装层级:")
+    print(f"    高层 — ParserStage  自动选解析器 + asyncio.to_thread 异步化")
+    print(f"    中层 — get_parser() 按名称获取解析器实例（线程安全缓存）")
+    print(f"    底层 — BaseParser   解析器基类（parse() 同步方法）")
+    print(f"    外部 — fitz          图片提取（src/ingestion 暂无封装）")
     print()
     print(f"  依赖项:")
-    print(f"    docling  — PDF → Markdown（自动安装）")
+    print(f"    docling  — PDF → Markdown（自动安装，src/ingestion 内部使用）")
     print(f"    pymupdf  — 图片提取引擎（pip install pymupdf）")
 
 
 async def _parse_pdf_text_only(pdf_path: Path) -> str:
-    """模式 A：纯文本解析 — docling 直接导出，不处理图片
+    """模式 A：纯文本解析 — 使用 ParserStage（src/ingestion 高层 API）
+
+    通过 ParserStage 自动选择解析器并异步化执行，这是 ingestion 模块
+    推荐的标准用法。ParserStage 内部调用 get_parser() + asyncio.to_thread()。
 
     Returns:
         Markdown 文本，图片以 <!-- image --> 占位符保留
     """
     import time
 
-    print(f"\n  ── 模式 A: 纯文本解析 ──")
+    from ingestion.context import Document, PipelineContext
+    from ingestion.parser import ParserStage
+
+    print(f"\n  ── 模式 A: ParserStage 纯文本解析 ──")
+    print(f"    使用: ingestion.parser.ParserStage")
+
     t0 = time.perf_counter()
 
-    def _convert():
-        from docling.document_converter import DocumentConverter
-        converter = DocumentConverter()
-        result = converter.convert(str(pdf_path))
-        return result.document.export_to_markdown()
+    # 构造 Document 和 PipelineContext（ingestion 标准数据模型）
+    doc = Document(
+        doc_id="demo_pdf_text_only",
+        source_path=pdf_path,
+        file_type=pdf_path.suffix.lstrip("."),
+        title=pdf_path.stem,
+        collection="demo_pdf",
+    )
+    ctx = PipelineContext(document=doc, status="running")
 
-    md_text = await asyncio.to_thread(_convert)
+    # ParserStage 内部：get_parser("pdf") → DoclingParser → asyncio.to_thread
+    stage = ParserStage()
+    try:
+        ctx = await stage.run(ctx)
+    except Exception as e:
+        print(f"    ❌ ParserStage 失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return ""
+
     elapsed = (time.perf_counter() - t0) * 1000
-
+    md_text = ctx.document.raw_text
     placeholder_count = md_text.count("<!-- image -->")
+
+    print(f"    解析器:      {ctx.document.metadata.get('parser', 'unknown')}")
     print(f"    耗时:        {elapsed:.0f} ms")
     print(f"    输出长度:    {len(md_text):,} 字符")
     print(f"    图片占位符:  {placeholder_count} 处（保留为 <!-- image -->）")
 
-    # 保存
+    # 保存（ParserStage 已写入 parsed_doc_dir，这里额外保存一份命名副本）
     stem = pdf_path.stem
     out_path = settings.ingestion.parsed_doc_dir / f"{stem}_text_only.md"
     out_path.write_text(md_text, encoding="utf-8")
@@ -127,10 +161,13 @@ async def _parse_pdf_text_only(pdf_path: Path) -> str:
 
 
 async def _parse_pdf_with_images(pdf_path: Path) -> str:
-    """模式 B：含图片解析 — docling + fitz 提取图片 + 注入引用
+    """模式 B：含图片解析 — get_parser("docling") + fitz 图片提取
+
+    使用 src/ingestion 封装的 get_parser() 获取解析器实例进行文本提取，
+    再通过 PyMuPDF (fitz) 逐页提取内嵌图片并注入引用。
 
     技术路线：
-      1. docling 解析 PDF → Markdown（含 <!-- image --> 占位符）
+      1. get_parser("docling").parse() → Markdown（含 <!-- image --> 占位符）
       2. PyMuPDF (fitz) 逐页提取内嵌图片 → 保存到磁盘
       3. 正则替换 <!-- image --> → ![](images/xxx.png)
     """
@@ -139,36 +176,39 @@ async def _parse_pdf_with_images(pdf_path: Path) -> str:
 
     import fitz
 
-    print(f"\n  ── 模式 B: 含图片解析 ──")
+    print(f"\n  ── 模式 B: get_parser() + fitz 含图片解析 ──")
+    print(f"    使用: ingestion.parsers.get_parser('docling') + fitz")
 
-    # B1. docling 解析文本
-    print(f"    [B1] docling 解析...")
+    stem = pdf_path.stem
+
+    # B1. 使用 get_parser() 获取解析器并解析文本
+    print(f"    [B1] get_parser('docling').parse() 解析文本...")
     t0 = time.perf_counter()
 
-    def _convert():
-        from docling.document_converter import DocumentConverter
-        converter = DocumentConverter()
-        result = converter.convert(str(pdf_path))
-        return result.document.export_to_markdown()
+    from ingestion.parsers import get_parser
 
-    md_text = await asyncio.to_thread(_convert)
+    parser = get_parser("docling")  # 线程安全缓存，跨调用复用实例
+    print(f"      解析器: {parser.name} ({type(parser).__name__})")
+
+    # parse() 是同步方法，通过 asyncio.to_thread 异步化
+    md_text = await asyncio.to_thread(
+        parser.parse, pdf_path, settings.ingestion.parsed_doc_dir
+    )
     text_ms = (time.perf_counter() - t0) * 1000
     placeholder_count = md_text.count("<!-- image -->")
     print(f"      耗时: {text_ms:.0f} ms, {len(md_text):,} 字符, {placeholder_count} 个占位符")
 
-    # B2. fitz 提取图片
-    print(f"    [B2] PyMuPDF 提取图片...")
+    # B2. fitz 提取图片（src/ingestion 暂无封装，直接使用 PyMuPDF）
+    print(f"    [B2] fitz 提取图片（外部依赖，非 src/ingestion 封装）...")
     t0 = time.perf_counter()
 
-    stem = pdf_path.stem
     out_dir = settings.ingestion.parsed_doc_dir / f"{stem}_images"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     pdf_doc = fitz.open(str(pdf_path))
-    total_pages = len(pdf_doc)
     extracted = []
 
-    for page_num in range(total_pages):
+    for page_num in range(len(pdf_doc)):
         for img_idx, img_info in enumerate(pdf_doc[page_num].get_images()):
             xref = img_info[0]
             try:
@@ -241,12 +281,12 @@ async def main():
     print(f"  ✅ {DEMO_PDF.name}")
     print(f"     大小: {DEMO_PDF.stat().st_size / 1024:.0f} KB")
 
-    # ── 1. 模式 A — 纯文本解析 ───────────────────────────────────
-    banner("1. 模式 A — 纯文本解析（无图片）")
+    # ── 1. 模式 A — ParserStage 纯文本解析 ────────────────────────
+    banner("1. 模式 A — ParserStage 纯文本解析（无图片）")
     md_text_only = await _parse_pdf_text_only(DEMO_PDF)
 
-    # ── 2. 模式 B — 含图片解析 ───────────────────────────────────
-    banner("2. 模式 B — 含图片解析")
+    # ── 2. 模式 B — get_parser() + fitz 含图片解析 ────────────────
+    banner("2. 模式 B — get_parser() + fitz 含图片解析")
     md_with_images = await _parse_pdf_with_images(DEMO_PDF)
 
     # ── 3. 两种模式对比 ──────────────────────────────────────────
@@ -255,15 +295,16 @@ async def main():
     text_img_count = md_text_only.count("<!-- image -->")
     real_img_count = md_with_images.count("![")
 
-    print(f"  {'指标':<20s} {'模式A (纯文本)':<20s} {'模式B (含图片)':<20s}")
-    print(f"  {'-'*60}")
-    print(f"  {'Markdown 长度':<20s} {len(md_text_only):<20,} {len(md_with_images):<20,}")
-    print(f"  {'图片引用':<20s} {f'{text_img_count} 个占位符':<20s} {f'{real_img_count} 个实际引用':<20s}")
-    print(f"  {'产物文件':<20s} {'*_text_only.md':<20s} {'*_with_images.md':<20s}")
-    print(f"  {'图片目录':<20s} {'(无)':<20s} {'*_images/':<20s}")
+    print(f"  {'指标':<22s} {'模式A (ParserStage)':<24s} {'模式B (get_parser+fitz)':<24s}")
+    print(f"  {'-'*70}")
+    print(f"  {'Markdown 长度':<22s} {len(md_text_only):<24,} {len(md_with_images):<24,}")
+    print(f"  {'图片引用':<22s} {f'{text_img_count} 个占位符':<24s} {f'{real_img_count} 个实际引用':<24s}")
+    print(f"  {'API 层级':<22s} {'ParserStage (高层)':<24s} {'get_parser() (底层)':<24s}")
+    print(f"  {'产物文件':<22s} {'*_text_only.md':<24s} {'*_with_images.md':<24s}")
+    print(f"  {'图片目录':<22s} {'(无)':<24s} {'*_images/':<24s}")
     print()
     print(f"  适用场景:")
-    print(f"    模式 A — 检索场景（向量化不需要图片）、纯文本分析")
+    print(f"    模式 A — 日常文档入库、检索预处理、批量处理")
     print(f"    模式 B — 文档预览、知识展示、需要保留图表信息")
 
     # ── 4. 预览 ──────────────────────────────────────────────────
