@@ -6,6 +6,7 @@
   2. 创建真实感 Markdown 文档
   3. 执行解析（ParserStage）
   4. 解析产物检查（落盘文件 + 文本统计）
+  5. PDF 解析 + 图片提取（docling 文本 + fitz 图片 → 含图 Markdown）
 
 运行方式：
   cd rag0709
@@ -146,6 +147,128 @@ DEMO_DOC = """# 员工手册
 """
 
 
+def _demo_pdf_parsing(pdf_path):
+    """解析真实 PDF 文件并提取图片，生成含图片引用的 Markdown
+
+    技术路线：
+      1. docling 解析 PDF → Markdown 文本（含 <!-- image --> 占位符）
+      2. PyMuPDF (fitz) 提取内嵌图片 → 保存为 PNG
+      3. 将 <!-- image --> 替换为 ![](images/xxx.png) 引用
+    """
+    import re
+    import time
+
+    import fitz
+
+    from docling.document_converter import DocumentConverter
+
+    print(f"  PDF 文件: {pdf_path.name}")
+    print(f"  文件大小: {pdf_path.stat().st_size / 1024:.0f} KB")
+
+    # ── 5a. docling 解析文本 ──────────────────────────────────────
+    print(f"\n  [5a] docling 解析文本...")
+    t0 = time.perf_counter()
+    converter = DocumentConverter()
+    result = converter.convert(str(pdf_path))
+    md_text = result.document.export_to_markdown()
+    docling_ms = (time.perf_counter() - t0) * 1000
+    print(f"    耗时: {docling_ms:.0f} ms")
+    print(f"    Markdown 长度: {len(md_text):,} 字符")
+    # 统计 <!-- image --> 占位符数量
+    placeholder_count = md_text.count("<!-- image -->")
+    print(f"    图片占位符: {placeholder_count} 处")
+
+    # ── 5b. fitz 提取图片 ─────────────────────────────────────────
+    print(f"\n  [5b] PyMuPDF 提取图片...")
+    t0 = time.perf_counter()
+
+    # 输出目录
+    pdf_stem = pdf_path.stem
+    out_dir = settings.ingestion.parsed_doc_dir / f"{pdf_stem}_pdf_images"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_doc = fitz.open(str(pdf_path))
+    total_pages = len(pdf_doc)
+    extracted_images = []
+
+    for page_num in range(total_pages):
+        page = pdf_doc[page_num]
+        images = page.get_images()
+        for img_idx, img_info in enumerate(images):
+            xref = img_info[0]
+            try:
+                base_image = pdf_doc.extract_image(xref)
+                img_bytes = base_image["image"]
+                ext = base_image["ext"]
+                # 保存图片
+                img_filename = f"page{page_num + 1:02d}_img{img_idx + 1:02d}.{ext}"
+                img_path = out_dir / img_filename
+                img_path.write_bytes(img_bytes)
+                extracted_images.append({
+                    "filename": img_filename,
+                    "page": page_num + 1,
+                    "size": len(img_bytes),
+                    "width": base_image["width"],
+                    "height": base_image["height"],
+                })
+            except Exception as e:
+                print(f"    ⚠️ 提取失败 page={page_num + 1} img={img_idx}: {e}")
+
+    pdf_doc.close()
+    fitz_ms = (time.perf_counter() - t0) * 1000
+    print(f"    耗时: {fitz_ms:.0f} ms")
+    print(f"    提取图片: {len(extracted_images)} 张 → {out_dir}")
+
+    # ── 5c. 注入图片引用 ──────────────────────────────────────────
+    print(f"\n  [5c] 注入图片引用...")
+
+    # 策略：将 <!-- image --> 占位符依次替换为实际图片引用
+    image_refs = [
+        f"![{img['filename']}]({pdf_stem}_pdf_images/{img['filename']})"
+        for img in extracted_images
+    ]
+
+    # 替换 <!-- image --> 为实际图片引用，多余的占位符保留原样
+    def _replace_image_placeholder(match, refs=image_refs, idx_counter=[0]):
+        idx = idx_counter[0]
+        if idx < len(refs):
+            idx_counter[0] += 1
+            return refs[idx]
+        return "<!-- image (无对应提取图片) -->"
+
+    md_with_images = re.sub(r"<!-- image -->", _replace_image_placeholder, md_text)
+
+    # 保存最终 Markdown
+    final_md_path = settings.ingestion.parsed_doc_dir / f"{pdf_stem}_with_images.md"
+    final_md_path.write_text(md_with_images, encoding="utf-8")
+    print(f"    最终 Markdown: {final_md_path}")
+    print(f"    图片引用数: {md_with_images.count('![')} 处")
+
+    # ── 5d. 展示统计与预览 ────────────────────────────────────────
+    print(f"\n  [5d] 统计与预览")
+    print(f"    PDF 页数:       {total_pages}")
+    print(f"    文档长度:       {len(md_text):,} 字符")
+    print(f"    提取图片:       {len(extracted_images)} 张")
+    if extracted_images:
+        total_img_kb = sum(img["size"] for img in extracted_images) / 1024
+        print(f"    图片总大小:     {total_img_kb:.0f} KB")
+        print(f"    图片尺寸范围:   {min(i['width'] for i in extracted_images)}×{min(i['height'] for i in extracted_images)} ~ {max(i['width'] for i in extracted_images)}×{max(i['height'] for i in extracted_images)}")
+        print(f"\n    前 3 张图片:")
+        for img in extracted_images[:3]:
+            print(f"      {img['filename']}  page={img['page']}  {img['width']}×{img['height']}  {img['size']:,} bytes")
+
+    # 展示最终 Markdown 前 800 字符
+    print(f"\n    最终 Markdown 预览（前 800 字符）:")
+    print(f"    {'─' * 56}")
+    for line in md_with_images.split("\n")[:25]:
+        # 截断过长的图片引用显示
+        if len(line) > 120:
+            line = line[:117] + "..."
+        print(f"    {line}")
+    if len(md_with_images.split("\n")) > 25:
+        print(f"    ... (共 {len(md_with_images.split(chr(10)))} 行)")
+
+
 async def main():
     # ── 1. 解析器配置概览 ─────────────────────────────────────────
     banner("1. 解析器配置概览")
@@ -225,8 +348,18 @@ async def main():
     else:
         print(f"  ⚠️ 解析产物文件不存在: {md_path}")
 
-    # ── 5. 清理与总结 ─────────────────────────────────────────────
-    banner("5. 清理临时文件")
+    # ── 5. PDF 解析（含图片提取）───────────────────────────────────
+    banner("5. PDF 解析（含图片提取）")
+
+    pdf_path = PROJECT_ROOT / "data/demo/OceanBase-数据库-V4.6.0-共享存储.pdf"
+    if not pdf_path.exists():
+        print(f"  ⚠️ PDF 文件不存在: {pdf_path}")
+        print(f"  跳过 PDF 解析演示")
+    else:
+        _demo_pdf_parsing(pdf_path)
+
+    # ── 6. 清理与总结 ─────────────────────────────────────────────
+    banner("6. 清理临时文件")
 
     demo_file.unlink(missing_ok=True)
     print(f"  已删除临时文档: {demo_file}")
