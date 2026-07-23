@@ -4,14 +4,17 @@
 提供命令行和编程接口，用于加密/解密 .env 文件中的敏感字段。
 
 使用示例：
-    # 加密单个值（交互式）
-    $ python -m security.env_encrypt DB_PASSWORD
+    # 交互式加密（推荐通过 python -m src.security 调用）
+    $ python -m src.security
+
+    # 加密单个值
+    $ python -m src.security DB_PASSWORD
 
     # 批量加密整个 .env 文件
-    $ python -m security.env_encrypt --encrypt-file .env
+    $ python -m src.security --encrypt-file .env
 
     # 解密验证
-    $ python -m security.env_encrypt --decrypt ENC[gAAAA...]
+    $ python -m src.security --decrypt ENC[gAAAA...]
 """
 import argparse
 import getpass
@@ -159,9 +162,10 @@ def process_env_file(input_path: str, output_path: str | None = None) -> None:
             key_stripped = key.strip().lower()
             value_stripped = value.strip()
 
-            # 检查是否需要加密
+            # 检查是否需要加密（按 _ 分词后精确匹配，避免子串误判如 KEYBOARD_LAYOUT）
+            key_components = set(key_stripped.split('_'))
             should_encrypt = (
-                    any(k in key_stripped for k in sensitive_keys) and
+                    any(k in key_components for k in sensitive_keys) and
                     not SecureEnvLoader.is_encrypted_value(value_stripped) and
                     not value_stripped.startswith('#')  # 非注释
             )
@@ -176,7 +180,8 @@ def process_env_file(input_path: str, output_path: str | None = None) -> None:
                     print(f"  🔒 Encrypted: {key.strip()}")
                 except Exception as e:
                     print(f"  ❌ Failed to encrypt {key.strip()}: {e}", file=sys.stderr)
-                    # 安全优先：加密失败时跳过该行，不将明文写入输出文件
+                    # 安全优先：不将明文写入输出文件，但写入注释标记避免静默丢失配置项
+                    f_out.write(f"# FAILED TO ENCRYPT: {key}={clean_value}\n")
                     failed_count += 1
             else:
                 f_out.write(line)
@@ -250,16 +255,16 @@ def main() -> None:
         epilog="""
 Examples:
   # Interactive mode
-  python -m security.env_encrypt
+  python -m src.security
 
   # Encrypt single value
-  python -m security.env_encrypt DB_PASSWORD
+  python -m src.security DB_PASSWORD
 
   # Encrypt entire .env file
-  python -m security.env_encrypt --encrypt-file .env
+  python -m src.security --encrypt-file .env
 
   # Decrypt for verification
-  python -m security.env_encrypt --decrypt "ENC[gAAAA...]"
+  python -m src.security --decrypt "ENC[gAAAA...]"
         """
     )
     parser.add_argument('key', nargs='?', help="Environment variable name (interactive mode)")
@@ -273,13 +278,18 @@ Examples:
     try:
         if args.decrypt:
             decrypted = decrypt_value(args.decrypt)
+            print("=" * 60)
+            print("⚠️  WARNING: Decrypted value will be displayed below.")
+            print("   Ensure this is NOT running in CI/CD or shared terminals.")
+            print("=" * 60)
             print(f"Decrypted value: {decrypted}")
+            print("=" * 60)
         elif args.encrypt_file:
             process_env_file(args.encrypt_file, args.output)
         elif args.key:
             print(f"Encrypting value for {args.key}...")
             try:
-                value = input("Value: ").strip()
+                value = getpass.getpass("Value: ").strip()
             except KeyboardInterrupt:
                 print("\n\n❌ Operation cancelled by user")
                 sys.exit(1)

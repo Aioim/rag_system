@@ -77,16 +77,16 @@ load_secure_dotenv()                      # 加载 .env
 
 ```bash
 # 交互式加密
-python -m security.env_encrypt
+python -m src.security
 
 # 加密单个值
-python -m security.env_encrypt DB_PASSWORD
+python -m src.security DB_PASSWORD
 
 # 批量加密 .env 文件
-python -m security.env_encrypt --encrypt-file .env
+python -m src.security --encrypt-file .env
 
 # 解密验证
-python -m security.env_encrypt --decrypt "ENC[gAAAA...]"
+python -m src.security --decrypt "ENC[gAAAA...]"
 ```
 
 ### 编程接口

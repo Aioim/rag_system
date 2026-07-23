@@ -219,7 +219,8 @@ class SecretsManager:
             if os.name != 'nt':
                 SecurityConfig.KEY_FILE.chmod(0o600)
 
-        self._auto_generated_key = True
+            self._auto_generated_key = True
+
         self._load_key_file()
 
     def _panic_and_exit(self, message: str) -> None:
@@ -323,6 +324,68 @@ class SecretsManager:
         return decrypted_bytes.decode("utf-8")
 
 
+# ==================== 不安全降级（仅开发环境） ====================
+
+class InsecureDevelopmentFallback:
+    """仅限开发环境的不安全降级（明文以 os.environ 存储，子进程可见）。
+
+    此类独立于 SecretsManager 定义，方便单元测试中独立构造和验证降级行为。
+    """
+
+    def set_secret(self, name: str, value: str) -> None:
+        if not isinstance(value, str):
+            raise TypeError(
+                f"Secret value must be str, got {type(value).__name__}"
+            )
+        os.environ[name] = value
+        logger.debug("[INSECURE] Secret stored as env var: %s", name)
+
+    def get_secret(self, name: str, default: str | None = None, required: bool = False) -> SecretStr | None:
+        val = os.getenv(name)
+        if val is None:
+            if required:
+                raise KeyError(f"Missing required env: {name}")
+            if default is not None:
+                return SecretStr(default, name=f"{name}_default")
+            return None
+        return SecretStr(val, name=name)
+
+    @staticmethod
+    def is_encrypted() -> bool:
+        return False
+
+    @staticmethod
+    def delete_secret(name: str) -> bool:
+        os.environ.pop(name, None)
+        logger.debug("[INSECURE] Secret removed from env var: %s", name)
+        return True
+
+    @staticmethod
+    def list_secrets() -> list[str]:
+        return []
+
+    @staticmethod
+    def get_status() -> dict:
+        return {
+            "encrypted": False,
+            "insecure_fallback": True,
+            "environment": "development",
+            "key_file": str(SecurityConfig.KEY_FILE),
+            "key_file_exists": SecurityConfig.KEY_FILE.exists(),
+            "key_valid": False,
+            "secrets_cached": 0,
+            "auto_generated": False,
+        }
+
+    @staticmethod
+    def encrypt_string(value: str) -> str:
+        raise RuntimeError("Fernet not initialized (insecure fallback active)")
+
+    @staticmethod
+    def decrypt_string(encrypted: str) -> str:
+        raise RuntimeError("Fernet not initialized (insecure fallback active)")
+
+
 # ==================== 全局实例 ====================
 
 try:
@@ -330,63 +393,6 @@ try:
 except Exception as e:
     if not SecurityConfig.IS_PRODUCTION or SecurityConfig.IS_CI:
         logger.warning("Falling back to INSECURE DEVELOPMENT MODE: %s", e)
-
-        class InsecureDevelopmentFallback:
-            """仅限开发环境的不安全降级（明文以 os.environ 存储，子进程可见）"""
-
-            def set_secret(self, name: str, value: str) -> None:
-                if not isinstance(value, str):
-                    raise TypeError(
-                        f"Secret value must be str, got {type(value).__name__}"
-                    )
-                os.environ[name] = value
-                logger.debug("[INSECURE] Secret stored as env var: %s", name)
-
-            def get_secret(self, name: str, default: str | None = None, required: bool = False) -> SecretStr | None:
-                val = os.getenv(name)
-                if val is None:
-                    if required:
-                        raise KeyError(f"Missing required env: {name}")
-                    if default is not None:
-                        return SecretStr(default, name=f"{name}_default")
-                    return None
-                return SecretStr(val, name=name)
-
-            @staticmethod
-            def is_encrypted() -> bool:
-                return False
-
-            @staticmethod
-            def delete_secret(name: str) -> bool:
-                os.environ.pop(name, None)
-                logger.debug("[INSECURE] Secret removed from env var: %s", name)
-                return True
-
-            @staticmethod
-            def list_secrets() -> list[str]:
-                return []
-
-            @staticmethod
-            def get_status() -> dict:
-                return {
-                    "encrypted": False,
-                    "insecure_fallback": True,
-                    "environment": "development",
-                    "key_file": str(SecurityConfig.KEY_FILE),
-                    "key_file_exists": SecurityConfig.KEY_FILE.exists(),
-                    "key_valid": False,
-                    "secrets_cached": 0,
-                    "auto_generated": False,
-                }
-
-            @staticmethod
-            def encrypt_string(value: str) -> str:
-                raise RuntimeError("Fernet not initialized (insecure fallback active)")
-
-            @staticmethod
-            def decrypt_string(encrypted: str) -> str:
-                raise RuntimeError("Fernet not initialized (insecure fallback active)")
-
         secrets = InsecureDevelopmentFallback()
     else:
         logger.critical("SecretsManager initialization failed in production: %s", e)
@@ -395,9 +401,13 @@ except Exception as e:
 
 # ==================== 便捷 API ====================
 
-def get_secret(name: str, default: str | None = None, required: bool = False) -> str | None:
-    secret_obj = secrets.get_secret(name, default=default, required=required)
-    return secret_obj.get() if secret_obj else None
+def get_secret(name: str, default: str | None = None, required: bool = False) -> SecretStr | None:
+    """获取并解密敏感值（便捷函数，返回 SecretStr 以保留防泄露保护）。
+
+    如需获取裸字符串，请显式调用 .get()：
+        val = get_secret("key").get() if get_secret("key") else None
+    """
+    return secrets.get_secret(name, default=default, required=required)
 
 
 def set_secret(name: str, value: str) -> None:

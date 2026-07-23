@@ -42,7 +42,7 @@ def main():
     print(f"  DB_PASSWORD        = {get_secret('DB_PASSWORD')!r}")
     print(f"  不存在的 key       = {get_secret('NOT_EXIST')!r}")
 
-    key_count = len(secrets._store) if hasattr(secrets, "_store") else "N/A"
+    key_count = len(secrets.list_secrets())
     print(f"\n  已存储密钥数量: {key_count}")
 
     # 空值
@@ -106,9 +106,9 @@ SECRET_TOKEN=ENC[{test_enc}]
     banner("✅ 密钥存储演示完成")
     print()
     print("  CLI 工具:")
-    print("    python -m security.env_encrypt encrypt <value>   # 加密")
-    print("    python -m security.env_encrypt decrypt <cipher>  # 解密")
-    print("    python -m security.env_encrypt generate-key      # 生成密钥")
+    print("    python -m src.security <KEY>              # 交互式加密")
+    print("    python -m src.security --encrypt-file .env # 批量加密")
+    print("    python -m src.security --decrypt <cipher> # 解密验证")
     print()
     print("  最佳实践:")
     print("    1. 禁止在 YAML / 代码中硬编码密钥")
