@@ -1,6 +1,7 @@
 """model 推理接口单元测试"""
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -51,6 +52,19 @@ class _FakeCrossEncoder:
             {"corpus_id": i, "score": 1.0 - i * 0.1}
             for i in range(len(documents))
         ]
+
+
+class _FakeLlama:
+    """模拟 llama-cpp-python 的 Llama 实例"""
+
+    def __init__(self, **kwargs):
+        self._kwargs = kwargs
+
+    def create_completion(self, prompt, max_tokens=512, temperature=0.7,
+                          top_p=0.95, stop=None, stream=False, **kwargs):
+        if stream:
+            return iter([{"choices": [{"text": "你好"}]}, {"choices": [{"text": "！"}]}])
+        return {"choices": [{"text": "这是模拟的LLM回复。"}]}
 
 
 # ============================================================================
@@ -158,13 +172,126 @@ class TestRerank:
 # ============================================================================
 
 class TestGenerate:
-    def test_generate_raises_not_implemented(self):
-        """generate() 抛 NotImplementedError，消息含方案说明"""
-        with pytest.raises(NotImplementedError) as exc_info:
-            models.generate("什么是最佳方案？")
-        msg = str(exc_info.value)
-        assert "llama-cpp-python" in msg
-        assert "GGUF" in msg
+    def test_generate_returns_string(self, monkeypatch):
+        """generate() 返回字符串"""
+        import model.inference as _inf
+        with _inf._local_llm_lock:
+            _inf._local_llm_instance = _inf.LocalLLM.__new__(_inf.LocalLLM)
+            _inf._local_llm_instance._model_path = Path("/fake/model.gguf")
+            _inf._local_llm_instance._n_ctx = 4096
+            _inf._local_llm_instance._n_threads = None
+            _inf._local_llm_instance._n_gpu_layers = 0
+            _inf._local_llm_instance._verbose = False
+            _inf._local_llm_instance._instance_lock = threading.Lock()
+            _inf._local_llm_instance._llm = _FakeLlama()
+        try:
+            result = inference.generate("测试prompt", temperature=0.5, max_tokens=100)
+            assert isinstance(result, str)
+            assert len(result) > 0
+        finally:
+            _inf._local_llm_instance = None
+
+    def test_generate_kwargs_passthrough(self, monkeypatch):
+        """**kwargs 透传给底层模型"""
+        captured: list = []
+
+        class _CaptureLlama:
+            def create_completion(self, **kwargs):
+                captured.append(kwargs)
+                return {"choices": [{"text": "ok"}]}
+
+        import model.inference as _inf
+        with _inf._local_llm_lock:
+            _inf._local_llm_instance = _inf.LocalLLM.__new__(_inf.LocalLLM)
+            _inf._local_llm_instance._model_path = Path("/fake/model.gguf")
+            _inf._local_llm_instance._n_ctx = 4096
+            _inf._local_llm_instance._n_threads = None
+            _inf._local_llm_instance._n_gpu_layers = 0
+            _inf._local_llm_instance._verbose = False
+            _inf._local_llm_instance._instance_lock = threading.Lock()
+            _inf._local_llm_instance._llm = _CaptureLlama()
+        try:
+            result = inference.generate("测试", temperature=0.3, max_tokens=200, top_p=0.8)
+            assert result == "ok"
+            assert captured[0]["temperature"] == 0.3
+            assert captured[0]["max_tokens"] == 200
+        finally:
+            _inf._local_llm_instance = None
+
+    def test_local_llm_lazy_load(self):
+        """LocalLLM 构造时不加载，__call__ 时才加载"""
+        llm = inference.LocalLLM("/nonexistent/model.gguf")
+        assert not llm.is_loaded
+        assert llm.model_path == Path("/nonexistent/model.gguf")
+
+    def test_local_llm_file_not_found(self, monkeypatch):
+        """GGUF 文件不存在时 __call__ 抛 FileNotFoundError"""
+        import sys
+        from types import ModuleType
+        fake_mod = ModuleType("llama_cpp")
+        fake_mod.Llama = _FakeLlama
+        monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
+
+        llm = inference.LocalLLM("/nonexistent/model.gguf")
+        with pytest.raises(FileNotFoundError):
+            llm("测试")
+
+    def test_generate_uses_defaults_from_config(self, monkeypatch):
+        """generate() 使用 settings.inference 中的默认参数"""
+        import model.inference as _inf
+        with _inf._local_llm_lock:
+            _inf._local_llm_instance = _inf.LocalLLM.__new__(_inf.LocalLLM)
+            _inf._local_llm_instance._model_path = Path("/fake/model.gguf")
+            _inf._local_llm_instance._n_ctx = 4096
+            _inf._local_llm_instance._n_threads = None
+            _inf._local_llm_instance._n_gpu_layers = 0
+            _inf._local_llm_instance._verbose = False
+            _inf._local_llm_instance._instance_lock = threading.Lock()
+            _inf._local_llm_instance._llm = _FakeLlama()
+        try:
+            result = inference.generate("测试")
+            assert isinstance(result, str)
+        finally:
+            _inf._local_llm_instance = None
+
+    def test_get_local_llm_singleton(self, monkeypatch):
+        """get_local_llm() 返回同一实例"""
+        monkeypatch.setattr(
+            inference, "_resolve_gguf_path",
+            lambda cfg, models: Path("/fake/model.gguf")
+        )
+        inference._reset_cache()
+        try:
+            llm1 = inference.get_local_llm()
+            llm2 = inference.get_local_llm()
+            assert llm1 is llm2
+        finally:
+            inference._reset_cache()
+
+    def test_local_llm_stream(self, monkeypatch):
+        """stream() 方法返回迭代器"""
+        llm = inference.LocalLLM.__new__(inference.LocalLLM)
+        llm._model_path = Path("/fake/model.gguf")
+        llm._n_ctx = 4096
+        llm._n_threads = None
+        llm._n_gpu_layers = 0
+        llm._verbose = False
+        llm._instance_lock = threading.Lock()
+        llm._llm = _FakeLlama()
+        tokens = list(llm.stream("你好"))
+        assert len(tokens) > 0
+        assert all(isinstance(t, str) for t in tokens)
+
+    def test_local_llm_unload(self, monkeypatch):
+        """unload() 后 is_loaded 为 False"""
+        llm = inference.LocalLLM.__new__(inference.LocalLLM)
+        llm._model_path = Path("/fake/model.gguf")
+        llm._n_ctx = 4096
+        llm._instance_lock = threading.Lock()
+        llm._llm = _FakeLlama()
+        assert llm.is_loaded
+        llm.unload()
+        assert not llm.is_loaded
 
 
 # ============================================================================
